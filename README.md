@@ -55,9 +55,9 @@ python casp17_ligand/models/boltz2_inference.py dataset=YOUR_DATASET
 ### Optimized Parameters (Recommended)
 Based on rigorous internal testing, the following hyperparameters yield the best performance:
 - `diffusion_samples`: **50** (Default best).
-  - *Fallback:* If Out-Of-Memory (OOM) occurs for ultra-large proteins (>1000 aa), lower this to **25**.
+  - *Fallback:* If Out-Of-Memory (OOM) occurs for ultra-large proteins (>1000 aa), lower this to **25**. 10 or fewer is not recommended due to the diversity collapse.
 - `step_scale`: **1.5** (Default).
-  - *Fallback:* If using 25 samples due to OOM, lower `step_scale` to **1.2**. This compensates for the loss of sampling diversity with smaller batches.
+  - *Note on Fallback:* If using 25 samples, you can optionally lower `step_scale` to **1.2**. Our experiments showed that `1.5` and `1.2` perform almost identically, though `1.2` showed a very marginal edge (+0.05 lDDT-PLI) in smaller batch validations. Using either is perfectly fine.
 - `sampling_steps`: **200**
 - `recycling_steps`: **10**
 - `use_potentials`: **true**
