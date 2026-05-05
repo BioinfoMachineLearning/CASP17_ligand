@@ -1,0 +1,35 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_dir: data/test_cases/${dataset}/rf3_inputs
+output_dir: outputs/rf3/${dataset}
+
+# Executable resolution
+rf3_exec: /bmlfast/Lyuwei/miniconda3/envs/rf3/bin/rf3
+env_name: rf3
+conda_envs_dir: /bmlfast/Lyuwei/miniconda3/envs
+
+# Model checkpoint
+ckpt_path: weights/rf3/rf3_foundry_01_24_latest_remapped.ckpt
+
+# Model parameters
+n_recycles: 10
+diffusion_batch_size: 5
+num_steps: 50   # README: "no deterioration vs 200 steps, >2x speedup"
+
+# Multi-seed: each seed runs Pairformer independently → most diversity
+# 20 seeds × 5 diffusion_batch = 100 structures per target
+num_seeds: 20
+
+# Early stopping: skip obviously bad predictions
+# Set to null to disable (or 0.3 for aggressive filtering)
+early_stopping_plddt_threshold: null
+
+# Output
+compress_outputs: false
+annotate_b_factor_with_plddt: false
+skip_existing: true
+override: false
+
+# GPU (use GPU 0 = A100 40GB)
+gpu_device: 0

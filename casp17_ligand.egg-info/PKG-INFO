@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: casp17_ligand
+Version: 0.1.0
+Requires-Python: >=3.9
+Requires-Dist: hydra-core>=1.3
+Requires-Dist: omegaconf>=2.3
+Requires-Dist: pandas
+Requires-Dist: rootutils
+Dynamic: requires-dist
+Dynamic: requires-python

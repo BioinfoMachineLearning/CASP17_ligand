@@ -1,0 +1,26 @@
+dataset: casp16_l4000
+input_csv: data/test_cases/${dataset}/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  boltz2:
+    output_dir: outputs/boltz2/${dataset}
+    n_models: 100
+  af3:
+    output_dir: outputs/alphafold3/${dataset}
+    n_models: 100
+  protenix:
+    output_dir: outputs/protenix/${dataset}
+    n_models: 100
+  seedfold:
+    output_dir: outputs/seedfold/${dataset}
+    n_models: 100
+
+num_workers: 16
+export_top_n: null
+
+# L4000 is a homodimer: chains A+B are protein, C+D are ligands
+# Chain detection is automatic via _auto_detect_chains()
+
+prefilter_metric: null
+prefilter_topn: null

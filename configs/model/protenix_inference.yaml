@@ -1,0 +1,42 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/${dataset}
+
+# Conda environment settings
+env_name: protenix
+gpu_device: 2                   # V100 32GB
+
+# PROTENIX_ROOT_DIR: weights and caches stored here
+# Defaults to ~ if null; set to a persistent dir to avoid re-downloading
+protenix_root_dir: /bmlfast/Lyuwei/0.Projects/CASP17_ligand/weights/protenix
+
+# Template search database (pdb_seqres FASTA, only needed for protenix mt/prep)
+seqres_database_path: /bmlfast/databases/pdb_seqres_2022_09_28.fasta
+
+# Pre-computed MSA directory (pairing.a3m, non_pairing.a3m, hmmsearch.a3m)
+msa_dir: null
+
+# ── Model & Inference Parameters ──────────────────────────────────────
+model_name: protenix_base_default_v1.0.0
+seeds: "101,102,103,104,105,106,107,108,109,110"   # 10 seeds
+dtype: bf16
+
+# Protenix feature flags
+use_msa: true
+use_template: true
+use_rna_msa: false
+enable_cache: true
+
+# Diffusion / recycling (null = use Protenix defaults via --use_default_params)
+cycle: 10        # recycling steps
+step: 200        # diffusion sampling steps
+n_sample: 5      # samples per seed (10 seeds × 5 samples = 50 models)
+
+# Optional target filter list (empty = process all targets in input_dir)
+# Example CLI override: targets=[L3005,L3081,L3138]
+targets: []
+
+# Override existing results
+override: false

@@ -1,0 +1,15 @@
+dataset: casp16_l3000_struct_zn
+input_csv: data/test_cases/casp16_l3000_struct/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  protenix:
+    output_dir: outputs/protenix/${dataset}
+    n_models: 50
+
+export_top_n: 5
+num_workers: 24
+
+# Optional confidence-based pre-filtering (null = disabled)
+prefilter_metric: null
+prefilter_topn: null

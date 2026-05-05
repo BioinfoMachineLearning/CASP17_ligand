@@ -1,0 +1,15 @@
+data
+outputs
+weights
+logs
+tests
+hellbender
+casp17/submissions
+top5_export
+
+# Python compiled files
+*.pyc
+__pycache__/
+
+# Log files
+*.log

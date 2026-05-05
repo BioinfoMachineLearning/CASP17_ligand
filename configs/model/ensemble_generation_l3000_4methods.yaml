@@ -1,0 +1,24 @@
+dataset: casp16_l3000_struct
+input_csv: data/test_cases/${dataset}/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  boltz2:
+    output_dir: outputs/boltz2/${dataset}
+    n_models: 100
+  af3:
+    output_dir: outputs/alphafold3/${dataset}
+    n_models: 100
+  protenix:
+    output_dir: outputs/protenix/${dataset}
+    n_models: 100
+  seedfold:
+    output_dir: outputs/seedfold/${dataset}
+    n_models: 100
+
+export_top_n: null   # save all ranked poses
+num_workers: 16
+
+# Optional confidence-based pre-filtering (null = disabled)
+prefilter_metric: null
+prefilter_topn: null

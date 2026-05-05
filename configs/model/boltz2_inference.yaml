@@ -1,0 +1,25 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_dir: data/test_cases/${dataset}/boltz2_inputs
+output_dir: outputs/boltz2/${dataset}
+cache_dir: weights/boltz
+
+# Executable resolution (priority: absolute path > conda auto-detect > PATH)
+boltz_exec: /bmlfast/Lyuwei/miniconda3/envs/boltz/bin/boltz       # executable name or absolute path
+env_name: boltz         # conda env name
+conda_envs_dir: /bmlfast/Lyuwei/miniconda3/envs    # auto-detect if null
+
+model: boltz2
+use_msa_server: true
+diffusion_samples: 50
+recycling_steps: 10
+sampling_steps: 200
+step_scale: 1.5
+use_potentials: true
+devices: 1
+accelerator: gpu
+seed: null
+override: false
+targets: null   # comma-separated target IDs to run, e.g. "L3001,L3002"; null = all
+round_tag: null # per-target subdir suffix, e.g. "r1" → outputs/{target}_r1/; null = legacy flat layout

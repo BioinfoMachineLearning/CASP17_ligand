@@ -1,0 +1,35 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_dir: data/test_cases/${dataset}/af3_inputs
+output_dir: outputs/alphafold3/${dataset}
+
+# Model weights and databases (absolute paths, read-only)
+model_dir: /bml/Lyuwei/Alphafold3_weights
+db_dir: /bmlfast/databases
+
+# Docker settings
+docker_image: alphafold3_new   # 新镜像（forks/alphafold3 build），支持 --num_seeds CLI
+gpu_device: 0
+
+# Resource limits (cgroups isolation) — 留一半给其他人
+memory_limit: 100g
+memory_swap: 100g
+cpus: 96.0
+shm_size: 8g
+
+# XLA memory settings（新镜像默认 preallocate=true, mem_fraction=0.95）
+xla_preallocate: true
+tf_force_unified_memory: false
+xla_client_mem_fraction: 0.95
+
+# AF3 pipeline flags
+num_seeds: 10               # --num_seeds CLI（新镜像），JSON 中不需要 modelSeeds
+run_data_pipeline: true
+run_inference: true
+
+# JAX compilation cache (persist across runs)
+jax_compilation_cache_dir: /tmp/af_output/.jax_cache
+
+# Override existing results
+override: false

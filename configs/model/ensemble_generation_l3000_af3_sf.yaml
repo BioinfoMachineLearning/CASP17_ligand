@@ -1,0 +1,14 @@
+dataset: casp16_l3000_struct
+input_csv: data/test_cases/${dataset}/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  af3:
+    output_dir: outputs/alphafold3/${dataset}
+    n_models: 50
+  seedfold:
+    output_dir: outputs/seedfold/${dataset}
+    n_models: 50
+
+export_top_n: 5   # only PoseBusters-validate top-5 ranked models
+num_workers: 16   # parallel target processing (1 = serial for debugging)

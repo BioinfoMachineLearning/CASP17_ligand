@@ -1,0 +1,27 @@
+dataset: casp16_l1000
+input_csv: data/test_cases/${dataset}/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  boltz2:
+    output_dir: outputs/boltz2/${dataset}
+    n_models: 100
+  af3:
+    output_dir: outputs/alphafold3/${dataset}
+    n_models: 100
+  protenix:
+    output_dir: outputs/protenix/${dataset}
+    n_models: 100
+  # rf3:  # temporarily excluded — num_steps=50 needs retuning
+  #   output_dir: outputs/rf3/${dataset}
+  #   n_models: 100
+  seedfold:
+    output_dir: outputs/seedfold/${dataset}
+    n_models: 100
+
+export_top_n: null   # save top-N ranked poses
+
+# Optional confidence-based pre-filtering (null = disabled)
+# Supported metrics: pair_iptm, ligand_plddt, ranking_score
+prefilter_metric: null   # e.g. "pair_iptm"
+prefilter_topn: null     # e.g. 30 (keep top 30 out of 50 per method)

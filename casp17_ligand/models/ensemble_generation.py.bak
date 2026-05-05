@@ -1,0 +1,2241 @@
+"""Ensemble generation and consensus ranking for CASP17 ligand predictions.
+
+Flow: Boltz-2 CIF outputs → PyMOL CIF→PDB+SDF → RMSD consensus ranking → PoseBusters filter
+Follows MULTICOM_ligand ranking protocol strictly.
+"""
+
+import json
+import logging
+import multiprocessing
+import os
+import shutil
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
+import hydra
+import numpy as np
+import pandas as pd
+import pymol
+from omegaconf import DictConfig
+from pymol import cmd
+from rdkit import Chem
+from rdkit.Chem import AllChem, rdFMCS
+from rdkit.Geometry import Point3D
+from posebusters import PoseBusters
+
+log = logging.getLogger(__name__)
+
+# Targets to skip due to sequence mismatch
+SKIP_TARGETS = set()
+
+# Type aliases matching MULTICOM conventions
+# (method, protein_pdb, ligand_sdf, score)
+RankedPredictions = Dict[int, Tuple[str, str, str, float]]
+
+
+from casp17_ligand.analysis.self_ranking_comparison import _get_ensemble_cif_list
+from casp17_ligand.utils.data_utils import extract_protein_and_ligands_with_prody
+
+
+def _validate_ligand_sdf(sdf_path: str, smiles: str) -> bool:
+    """Check that an SDF file has the correct bond count matching the SMILES template.
+
+    :param sdf_path: Path to SDF file to validate.
+    :param smiles: SMILES string for the expected ligand.
+    :return: True if bond count matches, False otherwise.
+    """
+    try:
+        template = Chem.MolFromSmiles(smiles)
+        if template is None:
+            return False
+        template = Chem.RemoveHs(template)
+        expected_bonds = template.GetNumBonds()
+
+        supplier = Chem.SDMolSupplier(sdf_path, sanitize=False)
+        mol = supplier[0]
+        if mol is None:
+            return False
+        actual_bonds = mol.GetNumBonds()
+
+        if actual_bonds != expected_bonds:
+            log.debug(f"Bond count mismatch in {sdf_path}: expected {expected_bonds}, got {actual_bonds}")
+            return False
+        return True
+    except Exception as e:
+        log.debug(f"Validation failed for {sdf_path}: {e}")
+        return False
+
+
+def _build_ligand_sdf_via_smiles_mcs(
+    cif_path: str, sdf_path: str, smiles: str, lig_chain: str = "B"
+) -> bool:
+    """Build ligand SDF using MCS mapping: SMILES topology + CIF coordinates.
+
+    PyMOL loads CIF → MOL2 (correct coords, possibly wrong bonds).
+    SMILES → RDKit template (correct topology).
+    MCS maps atoms between the two, then coordinates are transferred.
+
+    :param cif_path: Path to CIF file containing the ligand.
+    :param sdf_path: Output SDF path.
+    :param smiles: SMILES string for correct topology.
+    :param lig_chain: Chain ID for the ligand (e.g. "B" or "B0").
+    :return: True on success, False on failure.
+    """
+    import tempfile
+    mol2_path = None
+    try:
+        # Step 1: Extract ligand coordinates via PyMOL → MOL2
+        obj = f"mcs_{os.path.basename(cif_path).replace('.', '_')}"
+        cmd.load(cif_path, obj)
+        mol2_fd, mol2_path = tempfile.mkstemp(suffix=".mol2")
+        os.close(mol2_fd)
+        cmd.save(mol2_path, f'{obj} and chain "{lig_chain}"')
+        cmd.delete(obj)
+
+        # Step 2: Load MOL2 into RDKit (coords correct, bonds may be wrong)
+        mol2_mol = Chem.MolFromMol2File(mol2_path, removeHs=True, sanitize=False)
+        if mol2_mol is None:
+            log.warning(f"MCS fallback: could not load MOL2 for {cif_path}")
+            return False
+
+        # Step 3: Build template from SMILES (correct topology)
+        template = Chem.MolFromSmiles(smiles)
+        if template is None:
+            log.warning(f"MCS fallback: invalid SMILES: {smiles}")
+            return False
+        template = Chem.RemoveHs(template)
+
+        # Step 4: MCS match with BondCompare.CompareAny to handle bond order mismatches
+        mcs = rdFMCS.FindMCS(
+            [template, mol2_mol],
+            bondCompare=rdFMCS.BondCompare.CompareAny,
+            atomCompare=rdFMCS.AtomCompare.CompareElements,
+            timeout=10,
+        )
+        if mcs.numAtoms < template.GetNumAtoms():
+            log.warning(
+                f"MCS fallback: incomplete match for {cif_path} "
+                f"({mcs.numAtoms}/{template.GetNumAtoms()} atoms)"
+            )
+            return False
+
+        # Step 5: Get atom mapping from MCS
+        mcs_mol = Chem.MolFromSmarts(mcs.smartsString)
+        match_template = template.GetSubstructMatch(mcs_mol)
+        match_mol2 = mol2_mol.GetSubstructMatch(mcs_mol)
+
+        if len(match_template) != template.GetNumAtoms() or len(match_mol2) != len(match_template):
+            log.warning(f"MCS fallback: atom mapping incomplete for {cif_path}")
+            return False
+
+        # Step 6: Transfer coordinates from MOL2 to template
+        # Build mapping: template_atom_idx → mol2_atom_idx
+        tmpl_to_mol2 = {}
+        for mcs_idx in range(len(match_template)):
+            tmpl_to_mol2[match_template[mcs_idx]] = match_mol2[mcs_idx]
+
+        # Generate 3D conformer on template using MOL2 coordinates
+        conf_mol2 = mol2_mol.GetConformer()
+        AllChem.EmbedMolecule(template, AllChem.ETKDGv3())
+        conf = template.GetConformer()
+        for tmpl_idx, mol2_idx in tmpl_to_mol2.items():
+            pos = conf_mol2.GetAtomPosition(mol2_idx)
+            conf.SetAtomPosition(tmpl_idx, pos)
+
+        # Step 7: Write SDF
+        writer = Chem.SDWriter(sdf_path)
+        writer.write(template)
+        writer.close()
+
+        log.info(f"MCS fallback succeeded for {os.path.basename(sdf_path)}")
+        return True
+
+    except Exception as e:
+        log.warning(f"MCS fallback failed for {cif_path}: {e}")
+        try:
+            cmd.delete("all")
+        except Exception:
+            pass
+        return False
+    finally:
+        if mol2_path and os.path.exists(mol2_path):
+            os.remove(mol2_path)
+
+
+def cif_to_pdb_sdf(
+    cif_path: str, out_dir: str, name: str, smiles: Optional[str] = None,
+    prot_chain: str = "A", lig_chain: str = "B",
+    err_log_path: Optional[str] = None,
+) -> Tuple[Optional[str], Optional[str]]:
+    """Convert CIF output to PDB (protein) + SDF (ligand).
+
+    Ligand-centric extraction: keeps ALL protein chains (not just prot_chain)
+    plus the specified ligand chain. This ensures the full protein environment
+    around the ligand is preserved, which is critical for interface ligands
+    in dimers/multimers where the binding pocket spans multiple protein chains.
+
+    The prot_chain parameter is kept for backward compatibility but is only used
+    as a fallback hint; all large chains (>100 atoms) are automatically included.
+
+    :param cif_path: Path to input CIF file.
+    :param out_dir: Output directory.
+    :param name: Base name for output files (e.g. 'L1001_model_0').
+    :param smiles: SMILES string for bond order assignment. If None, raw PyMOL SDF is kept.
+    :param prot_chain: Protein chain ID hint (kept for compatibility).
+    :param lig_chain: Ligand chain ID to extract (e.g. "B" or "B0").
+    :return: (protein_pdb_path, ligand_sdf_path) or (None, None) on failure.
+    """
+    pdb_path = os.path.join(out_dir, f"{name}_protein.pdb")
+    sdf_path = os.path.join(out_dir, f"{name}_ligand.sdf")
+
+    # Normalize SMILES separator: ensemble_inputs.csv uses ':' but RDKit uses '.'
+    if smiles:
+        smiles = smiles.replace(':', '.')
+
+    # Cache hit: validate existing SDF if smiles provided
+    if os.path.exists(pdb_path) and os.path.exists(sdf_path):
+        if smiles and not _validate_ligand_sdf(sdf_path, smiles):
+            log.info(f"Cached SDF has wrong bonds, regenerating: {name}")
+            os.remove(sdf_path)
+        else:
+            return pdb_path, sdf_path
+
+    complex_pdb = os.path.join(out_dir, f"{name}_complex.pdb")
+    try:
+        obj = f"obj_{name}"
+        cmd.load(cif_path, obj)
+        chains = cmd.get_chains(obj)
+        if lig_chain not in chains:
+            log.warning(f"Expected ligand chain {lig_chain} in {cif_path}, got {chains}")
+            cmd.delete(obj)
+            return None, None
+
+        # Ligand-centric: include ALL protein chains (>100 atoms) + the target ligand chain
+        prot_chains = []
+        for ch in chains:
+            if ch == lig_chain:
+                continue
+            n_atoms = cmd.count_atoms(f'{obj} and chain "{ch}"')
+            if n_atoms > 100:
+                prot_chains.append(ch)
+        if not prot_chains:
+            # Fallback: use prot_chain hint
+            if prot_chain in chains:
+                prot_chains = [prot_chain]
+            else:
+                log.warning(f"No protein chains found in {cif_path}")
+                cmd.delete(obj)
+                return None, None
+
+        select_chains = prot_chains + [lig_chain]
+        sel = " or ".join([f'chain "{ch}"' for ch in select_chains])
+        cmd.save(complex_pdb, f'{obj} and ({sel})')
+        cmd.delete(obj)
+    except Exception as e:
+        log.warning(f"PyMOL conversion failed for {cif_path}: {e}")
+        try:
+            cmd.delete("all")
+        except Exception:
+            pass
+        return None, None
+
+    prody_ok = False
+    try:
+        extracted_mol = extract_protein_and_ligands_with_prody(
+            input_pdb_file=complex_pdb,
+            protein_output_pdb_file=pdb_path,
+            ligands_output_sdf_file=sdf_path,
+            ligand_smiles=smiles,
+            load_hetatms_as_ligands=True,
+            generify_resnames=False
+        )
+        if extracted_mol is not None:
+            prody_ok = True
+    except Exception as e:
+        log.debug(f"ProDy extraction raised for {name}: {e}")
+
+    if os.path.exists(complex_pdb):
+        os.remove(complex_pdb)
+
+    # Validate the SDF from ProDy and apply MCS fallback if needed
+    if prody_ok and os.path.exists(sdf_path) and smiles:
+        if not _validate_ligand_sdf(sdf_path, smiles):
+            msg = f"[{name}] ProDy SDF has wrong bonds, trying MCS fallback"
+            log.warning(msg)
+            if err_log_path:
+                try:
+                    with open(err_log_path, "a") as ef:
+                        ef.write(msg + "\n")
+                except Exception:
+                    pass
+            os.remove(sdf_path)
+            prody_ok = False
+
+    if not prody_ok or not os.path.exists(sdf_path):
+        # ProDy failed to produce a valid ligand SDF — try MCS fallback
+        if smiles:
+            mcs_ok = _build_ligand_sdf_via_smiles_mcs(cif_path, sdf_path, smiles, lig_chain)
+            if not mcs_ok:
+                msg = f"[{name}] CRITICAL: Both ProDy and MCS fallback failed — model skipped"
+                log.warning(msg)
+                if err_log_path:
+                    try:
+                        with open(err_log_path, "a") as ef:
+                            ef.write(msg + "\n")
+                    except Exception:
+                        pass
+                return None, None
+        else:
+            msg = f"[{name}] ProDy failed and no SMILES for MCS fallback — model skipped"
+            log.warning(msg)
+            if err_log_path:
+                try:
+                    with open(err_log_path, "a") as ef:
+                        ef.write(msg + "\n")
+                except Exception:
+                    pass
+            return None, None
+
+    # ProDy always writes protein PDB before processing ligand, so it should exist.
+    # If it doesn't, something fundamentally went wrong — bail out.
+    if not os.path.exists(pdb_path):
+        log.warning(f"Protein PDB not generated by ProDy for {name}")
+        return None, None
+
+    return pdb_path, sdf_path
+
+
+def read_ligand_positions(sdf_path: str) -> Optional[np.ndarray]:
+    """Read ligand heavy-atom 3D positions from SDF file (same as MULTICOM read_molecule).
+
+    :param sdf_path: Path to SDF file.
+    :return: numpy array of shape (N_atoms, 3) or None on failure.
+    """
+    try:
+        supplier = Chem.SDMolSupplier(sdf_path, sanitize=True)
+        mol = supplier[0]
+        if mol is None:
+            return None
+        return mol.GetConformer().GetPositions()
+    except Exception as e:
+        log.warning(f"Failed to read ligand positions from {sdf_path}: {e}")
+        return None
+
+
+def align_complex_to_reference(
+    ref_pdb: str,
+    mob_pdb: str, mob_sdf: str,
+    mob_lig_pos: np.ndarray,
+    aligned_dir: Optional[str] = None,
+) -> Optional[np.ndarray]:
+    """Superimpose mobile protein onto reference protein (CA atoms), apply same
+    rotation/translation to mobile ligand positions.
+
+    Numerically equivalent to MULTICOM's align_complex_to_protein_only
+    (verified: 0.000000 Å difference vs scipy Rotation.align_vectors).
+
+    :param ref_pdb: Reference protein PDB path.
+    :param mob_pdb: Mobile protein PDB path.
+    :param mob_sdf: Mobile ligand SDF path (used to save aligned SDF).
+    :param mob_lig_pos: Mobile ligand atom positions (N, 3).
+    :param aligned_dir: If provided, save aligned PDB and SDF to this directory.
+    :return: Aligned ligand positions, or None on failure.
+    """
+    try:
+        from Bio import PDB
+        from Bio.PDB.Superimposer import Superimposer
+        from Bio.PDB import PDBIO
+
+        parser = PDB.PDBParser(QUIET=True)
+        ref_struct = parser.get_structure("ref", ref_pdb)
+        mob_struct = parser.get_structure("mob", mob_pdb)
+
+        ref_cas = [r["CA"] for r in ref_struct.get_residues() if "CA" in r]
+        mob_cas = [r["CA"] for r in mob_struct.get_residues() if "CA" in r]
+        n = min(len(ref_cas), len(mob_cas))
+        if n < 3:
+            return None
+
+        sup = Superimposer()
+        sup.set_atoms(ref_cas[:n], mob_cas[:n])
+        rot = np.array(sup.rotran[0])
+        tran = np.array(sup.rotran[1])
+        aligned_lig = mob_lig_pos @ rot + tran
+
+        if aligned_dir is not None:
+            os.makedirs(aligned_dir, exist_ok=True)
+            base = os.path.splitext(os.path.basename(mob_pdb))[0]
+            # Save aligned protein PDB
+            sup.apply(mob_struct.get_atoms())
+            io = PDBIO()
+            io.set_structure(mob_struct)
+            io.save(os.path.join(aligned_dir, f"{base}_aligned.pdb"))
+
+            # Save aligned ligand SDF
+            mol = Chem.SDMolSupplier(mob_sdf, sanitize=True)[0]
+            if mol is not None:
+                conf = mol.GetConformer()
+                for i in range(mol.GetNumAtoms()):
+                    conf.SetAtomPosition(i, Point3D(*aligned_lig[i]))
+                sdf_base = os.path.splitext(os.path.basename(mob_sdf))[0]
+                writer = Chem.SDWriter(os.path.join(aligned_dir, f"{sdf_base}_aligned.sdf"))
+                writer.write(mol)
+                writer.close()
+
+        return aligned_lig
+    except Exception as e:
+        log.warning(f"Protein alignment failed: {e}")
+        return None
+
+
+def rmsd_consensus_rank(
+    predictions: List[Tuple[str, str, str]],
+    aligned_dir: Optional[str] = None,
+    cache_path: Optional[str] = None,
+) -> RankedPredictions:
+    """RMSD-based consensus ranking with pairwise protein alignment and incremental caching."""
+    import json
+    
+    raw_positions = []
+    valid_predictions = []
+    cached_cas = []
+    seen_positions = {}
+    
+    # Load cache if exists
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to load RMSD cache: {e}")
+            pairwise_cache = {}
+    
+    from Bio import PDB
+    from Bio.PDB.Superimposer import Superimposer
+    parser = PDB.PDBParser(QUIET=True)
+
+    # First pass: parse coordinates and CA arrays for all requested models
+    for pred in predictions:
+        method, pdb, sdf = pred
+        pos = read_ligand_positions(sdf)
+        if pos is None:
+            log.warning(f"Skipping {sdf}: could not read positions")
+            continue
+            
+        pos_key = tuple(map(tuple, pos))
+        if pos_key in seen_positions:
+            log.debug(f"Duplicate pose skipped: {sdf}")
+            continue
+            
+        try:
+            struct = parser.get_structure("X", pdb)
+            cas = [r["CA"] for r in struct.get_residues() if "CA" in r]
+        except Exception:
+            continue
+
+        seen_positions[pos_key] = True
+        raw_positions.append(pos)
+        valid_predictions.append(pred)
+        cached_cas.append(cas)
+
+    if len(valid_predictions) == 0:
+        return {}
+    if len(valid_predictions) == 1:
+        method, pdb, sdf = valid_predictions[0]
+        return {1: (method, pdb, sdf, 0.0)}
+
+    n = len(valid_predictions)
+    avg_rmsd = []
+    cache_updated = False
+    
+    # Second pass: compute pairwise similarities
+    import concurrent.futures
+
+    def compute_rmsd_row(i):
+        rmsd_vals = []
+        method_i = valid_predictions[i][0]
+        ref_cas = cached_cas[i]
+        row_cache = {}
+        for j in range(n):
+            if i == j: continue
+            method_j = valid_predictions[j][0]
+            # Check cache!
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                rmsd_vals.append(pairwise_cache[method_i][method_j])
+                continue
+                
+            mob_cas = cached_cas[j]
+            num_ca = min(len(ref_cas), len(mob_cas))
+            if num_ca < 3: continue
+            
+            sup = Superimposer()
+            sup.set_atoms(ref_cas[:num_ca], mob_cas[:num_ca])
+            rot = np.array(sup.rotran[0])
+            tran = np.array(sup.rotran[1])
+            
+            aligned_pos_j = raw_positions[j] @ rot + tran
+            diff = aligned_pos_j - raw_positions[i]
+            dist = np.sqrt(np.sum(diff**2, axis=-1))
+            rmsd = float(np.sqrt(np.mean(dist**2)))
+            rmsd_vals.append(rmsd)
+            row_cache[method_j] = rmsd
+        return i, method_i, rmsd_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_rmsd_row, i) for i in range(n)]
+        
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_rmsd_vals, row_cache = future.result()
+            
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+                
+            for method_j, rmsd in row_cache.items():
+                pairwise_cache[method_i][method_j] = rmsd
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = rmsd
+                cache_updated = True
+                
+            avg_rmsd.append((i, np.mean(row_rmsd_vals) if row_rmsd_vals else 0.0))
+
+    avg_rmsd.sort(key=lambda x: x[0])
+    avg_rmsd_arr = np.array([x[1] for x in avg_rmsd])
+
+    # Save cache incrementally
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save RMSD cache: {e}")
+
+    # Lower RMSD is better
+    sorted_idx = np.argsort(avg_rmsd_arr)
+
+    return {
+        rank + 1: (*valid_predictions[idx], float(avg_rmsd_arr[idx]))
+        for rank, idx in enumerate(sorted_idx)
+    }
+
+
+def rmsd_6a_consensus_rank(
+    predictions: List[Tuple[str, str, str]],
+    cache_path: Optional[str] = None,
+    pocket_cutoff: float = 6.0,
+) -> RankedPredictions:
+    """RMSD-based consensus ranking using pocket-only CA alignment (6A around ligand).
+
+    Instead of aligning all protein CA atoms, only aligns CA atoms of residues
+    within pocket_cutoff Å of the ligand. This focuses the alignment on the
+    binding site and can improve ligand RMSD accuracy.
+    """
+    import json
+    from Bio import PDB
+    from Bio.PDB.NeighborSearch import NeighborSearch
+
+    parser = PDB.PDBParser(QUIET=True)
+
+    # Load cache if exists
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to load RMSD_6A cache: {e}")
+            pairwise_cache = {}
+
+    # First pass: parse ligand positions, protein CA coords, and pocket residue keys
+    raw_positions = []
+    valid_predictions = []
+    # For each model: dict mapping (chain_id, resseq) -> CA coordinate array
+    all_ca_by_reskey = []
+    # For each model: set of (chain_id, resseq) keys for pocket residues
+    all_pocket_reskeys = []
+    seen_positions = {}
+
+    for pred in predictions:
+        method, pdb, sdf = pred
+        pos = read_ligand_positions(sdf)
+        if pos is None:
+            log.warning(f"Skipping {sdf}: could not read positions")
+            continue
+
+        pos_key = tuple(map(tuple, pos))
+        if pos_key in seen_positions:
+            log.debug(f"Duplicate pose skipped: {sdf}")
+            continue
+
+        try:
+            struct = parser.get_structure("X", pdb)
+        except Exception:
+            continue
+
+        # Build CA coordinate map by residue key
+        ca_by_reskey = {}
+        for r in struct.get_residues():
+            if r.id[0] != " ":
+                continue
+            if "CA" in r:
+                chain_id = r.get_parent().id
+                resseq = r.id[1]
+                ca_by_reskey[(chain_id, resseq)] = r["CA"].get_vector().get_array()
+
+        if len(ca_by_reskey) < 3:
+            continue
+
+        # Find pocket residues: protein residues with any atom within cutoff of ligand
+        all_atoms = list(struct[0].get_atoms())
+        ns = NeighborSearch(all_atoms)
+        pocket_reskeys = set()
+        for lx, ly, lz in pos:
+            for r in ns.search(np.array([lx, ly, lz]), pocket_cutoff, level="R"):
+                if r.id[0] == " " and "CA" in r:
+                    chain_id = r.get_parent().id
+                    resseq = r.id[1]
+                    pocket_reskeys.add((chain_id, resseq))
+
+        if len(pocket_reskeys) < 3:
+            log.debug(f"Too few pocket residues ({len(pocket_reskeys)}) for {method}, using all CAs")
+            pocket_reskeys = set(ca_by_reskey.keys())
+
+        seen_positions[pos_key] = True
+        raw_positions.append(pos)
+        valid_predictions.append(pred)
+        all_ca_by_reskey.append(ca_by_reskey)
+        all_pocket_reskeys.append(pocket_reskeys)
+
+    if len(valid_predictions) == 0:
+        return {}
+    if len(valid_predictions) == 1:
+        method, pdb, sdf = valid_predictions[0]
+        return {1: (method, pdb, sdf, 0.0)}
+
+    n = len(valid_predictions)
+    avg_rmsd = []
+    cache_updated = False
+
+    import concurrent.futures
+
+    def compute_rmsd_6a_row(i):
+        rmsd_vals = []
+        method_i = valid_predictions[i][0]
+        pocket_i = all_pocket_reskeys[i]
+        ca_i = all_ca_by_reskey[i]
+        row_cache = {}
+
+        for j in range(n):
+            if i == j:
+                continue
+            method_j = valid_predictions[j][0]
+
+            # Check cache
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                rmsd_vals.append(pairwise_cache[method_i][method_j])
+                continue
+
+            ca_j = all_ca_by_reskey[j]
+            # Find common pocket residues (use model i's pocket definition)
+            common_keys = sorted(k for k in pocket_i if k in ca_j)
+            if len(common_keys) < 3:
+                continue
+
+            ref_coords = np.array([ca_i[k] for k in common_keys])
+            mob_coords = np.array([ca_j[k] for k in common_keys])
+
+            # Kabsch alignment on pocket CAs
+            ref_center = ref_coords.mean(axis=0)
+            mob_center = mob_coords.mean(axis=0)
+            ref_c = ref_coords - ref_center
+            mob_c = mob_coords - mob_center
+            H = mob_c.T @ ref_c
+            U, S, Vt = np.linalg.svd(H)
+            d = np.linalg.det(Vt.T @ U.T)
+            sign_matrix = np.diag([1, 1, d])
+            rot = (Vt.T @ sign_matrix @ U.T).T  # rot such that mob @ rot + tran ≈ ref
+            tran = ref_center - mob_center @ rot
+
+            aligned_pos_j = raw_positions[j] @ rot + tran
+            diff = aligned_pos_j - raw_positions[i]
+            dist = np.sqrt(np.sum(diff ** 2, axis=-1))
+            rmsd = float(np.sqrt(np.mean(dist ** 2)))
+            rmsd_vals.append(rmsd)
+            row_cache[method_j] = rmsd
+
+        return i, method_i, rmsd_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_rmsd_6a_row, i) for i in range(n)]
+
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_rmsd_vals, row_cache = future.result()
+
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+
+            for method_j, rmsd in row_cache.items():
+                pairwise_cache[method_i][method_j] = rmsd
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = rmsd
+                cache_updated = True
+
+            avg_rmsd.append((i, np.mean(row_rmsd_vals) if row_rmsd_vals else 0.0))
+
+    avg_rmsd.sort(key=lambda x: x[0])
+    avg_rmsd_arr = np.array([x[1] for x in avg_rmsd])
+
+    # Save cache
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save RMSD_6A cache: {e}")
+
+    # Lower RMSD is better
+    sorted_idx = np.argsort(avg_rmsd_arr)
+
+    return {
+        rank + 1: (*valid_predictions[idx], float(avg_rmsd_arr[idx]))
+        for rank, idx in enumerate(sorted_idx)
+    }
+
+
+def rmsd_8a_consensus_rank(predictions, cache_path=None):
+    return rmsd_6a_consensus_rank(predictions, cache_path=cache_path, pocket_cutoff=8.0)
+
+
+def rmsd_10a_consensus_rank(predictions, cache_path=None):
+    return rmsd_6a_consensus_rank(predictions, cache_path=cache_path, pocket_cutoff=10.0)
+
+
+# ---------------------------------------------------------------------------
+# Multi-ligand consensus ranking functions (for duplicate-ligand targets)
+# ---------------------------------------------------------------------------
+
+def rmsd_consensus_rank_multilig(
+    predictions_by_chain: Dict[str, List[Tuple[str, str, str]]],
+    aligned_dir: Optional[str] = None,
+    cache_path: Optional[str] = None,
+    chain_smiles: Optional[Dict[str, str]] = None,
+) -> RankedPredictions:
+    """RMSD consensus ranking across multiple ligand chains.
+
+    For each pair of models (i, j): align using full protein CA atoms,
+    then compute ligand RMSD for all cross-chain pairs (same SMILES only), take min.
+    Models may be present in only a subset of chains (e.g. SeedFold only predicted
+    one chain for large multimers). Uses model name as key, not index.
+    """
+    import json
+    from Bio import PDB
+    from Bio.PDB.Superimposer import Superimposer
+
+    chain_ids = list(predictions_by_chain.keys())
+    if len(chain_ids) < 2:
+        return rmsd_consensus_rank(predictions_by_chain[chain_ids[0]], aligned_dir=aligned_dir, cache_path=cache_path)
+
+    # Build per-chain lookup by model name (handles different model counts per chain)
+    chain_lookup = {}
+    all_names = set()
+    for ch in chain_ids:
+        chain_lookup[ch] = {p[0]: p for p in predictions_by_chain[ch]}
+        all_names.update(chain_lookup[ch].keys())
+    method_names = sorted(all_names)
+    n = len(method_names)
+
+    # unified_preds: pick PDB from any chain that has the model (protein is same)
+    unified_preds = []
+    for name in method_names:
+        for ch in chain_ids:
+            if name in chain_lookup[ch]:
+                unified_preds.append(chain_lookup[ch][name])
+                break
+
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception:
+            pairwise_cache = {}
+
+    parser = PDB.PDBParser(QUIET=True)
+
+    cached_cas = []
+    valid_mask = [True] * n
+    chain_positions = {ch: [] for ch in chain_ids}
+
+    for i in range(n):
+        _, pdb, _ = unified_preds[i]
+        try:
+            struct = parser.get_structure("X", pdb)
+            cas = [r["CA"] for r in struct.get_residues() if "CA" in r]
+        except Exception:
+            cas = []
+
+        if len(cas) < 3:
+            valid_mask[i] = False
+            cached_cas.append([])
+            for ch in chain_ids:
+                chain_positions[ch].append(None)
+            continue
+
+        cached_cas.append(cas)
+
+        # Read ligand positions from each chain (None if model missing from chain)
+        has_any = False
+        for ch in chain_ids:
+            pred = chain_lookup[ch].get(method_names[i])
+            if pred is not None:
+                pos = read_ligand_positions(pred[2])
+                chain_positions[ch].append(pos)
+                if pos is not None:
+                    has_any = True
+            else:
+                chain_positions[ch].append(None)
+
+        if not has_any:
+            valid_mask[i] = False
+
+    valid_indices = [i for i in range(n) if valid_mask[i]]
+    if len(valid_indices) == 0:
+        return {}
+    if len(valid_indices) == 1:
+        idx = valid_indices[0]
+        method, pdb, sdf = unified_preds[idx]
+        return {1: (method, pdb, sdf, 0.0)}
+
+    avg_rmsd = []
+    cache_updated = False
+
+    import concurrent.futures
+
+    def compute_rmsd_row_multilig(i):
+        rmsd_vals = []
+        method_i = method_names[i]
+        row_cache = {}
+        ref_cas = cached_cas[i]
+
+        for j in valid_indices:
+            if i == j:
+                continue
+            method_j = method_names[j]
+
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                rmsd_vals.append(pairwise_cache[method_i][method_j])
+                continue
+
+            mob_cas = cached_cas[j]
+            num_ca = min(len(ref_cas), len(mob_cas))
+            if num_ca < 3:
+                continue
+
+            sup = Superimposer()
+            sup.set_atoms(ref_cas[:num_ca], mob_cas[:num_ca])
+            rot = np.array(sup.rotran[0])
+            tran = np.array(sup.rotran[1])
+
+            min_rmsd = float("inf")
+            for ch_a in chain_ids:
+                pos_i = chain_positions[ch_a][i]
+                if pos_i is None:
+                    continue
+                for ch_b in chain_ids:
+                    if chain_smiles and chain_smiles.get(ch_a) != chain_smiles.get(ch_b):
+                        continue
+                    pos_j = chain_positions[ch_b][j]
+                    if pos_j is None:
+                        continue
+                    aligned_pos_j = pos_j @ rot + tran
+                    diff = aligned_pos_j - pos_i
+                    dist = np.sqrt(np.sum(diff ** 2, axis=-1))
+                    rmsd = float(np.sqrt(np.mean(dist ** 2)))
+                    if rmsd < min_rmsd:
+                        min_rmsd = rmsd
+
+            if min_rmsd < float("inf"):
+                rmsd_vals.append(min_rmsd)
+                row_cache[method_j] = min_rmsd
+
+        return i, method_i, rmsd_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_rmsd_row_multilig, i) for i in valid_indices]
+
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_rmsd_vals, row_cache = future.result()
+
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+
+            for method_j, rmsd in row_cache.items():
+                pairwise_cache[method_i][method_j] = rmsd
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = rmsd
+                cache_updated = True
+
+            avg_rmsd.append((i, np.mean(row_rmsd_vals) if row_rmsd_vals else 0.0))
+
+    avg_rmsd.sort(key=lambda x: x[0])
+
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save RMSD multilig cache: {e}")
+
+    idx_to_avg = {entry[0]: entry[1] for entry in avg_rmsd}
+    scored = [(idx, idx_to_avg.get(idx, 0.0)) for idx in valid_indices]
+    scored.sort(key=lambda x: x[1])
+
+    return {
+        rank + 1: (*unified_preds[idx], float(score))
+        for rank, (idx, score) in enumerate(scored)
+    }
+
+
+def sucos_consensus_rank_multilig(
+    predictions_by_chain: Dict[str, List[Tuple[str, str, str]]],
+    aligned_dir: Optional[str] = None,
+    cache_path: Optional[str] = None,
+    chain_smiles: Optional[Dict[str, str]] = None,
+) -> RankedPredictions:
+    """SuCOS consensus ranking across multiple ligand chains.
+
+    For each pair of models (i, j): compute pocket IoU * ligand_sucos for all
+    cross-chain pairs (same SMILES only), take max.
+    Models may be present in only a subset of chains.
+    """
+    import json
+    from casp17_ligand.utils.pocket_metrics import ligand_sucos, load_ligand_mol, _pocket_from_mol
+    from Bio import PDB
+
+    chain_ids = list(predictions_by_chain.keys())
+    if len(chain_ids) < 2:
+        return sucos_consensus_rank(predictions_by_chain[chain_ids[0]], aligned_dir=aligned_dir, cache_path=cache_path)
+
+    # Build per-chain lookup by model name
+    chain_lookup = {}
+    all_names = set()
+    for ch in chain_ids:
+        chain_lookup[ch] = {p[0]: p for p in predictions_by_chain[ch]}
+        all_names.update(chain_lookup[ch].keys())
+    method_names = sorted(all_names)
+    n = len(method_names)
+
+    unified_preds = []
+    for name in method_names:
+        for ch in chain_ids:
+            if name in chain_lookup[ch]:
+                unified_preds.append(chain_lookup[ch][name])
+                break
+
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception:
+            pairwise_cache = {}
+
+    parser = PDB.PDBParser(QUIET=True)
+
+    chain_frags = {ch: [] for ch in chain_ids}
+    valid_mask = [True] * n
+
+    for i in range(n):
+        has_any = False
+        for ch in chain_ids:
+            pred = chain_lookup[ch].get(method_names[i])
+            if pred is None:
+                chain_frags[ch].append(None)
+                continue
+
+            _, pdb, sdf = pred
+            mol = load_ligand_mol(sdf)
+            if mol is None:
+                chain_frags[ch].append(None)
+                continue
+
+            try:
+                struct = parser.get_structure("X", pdb)
+                from rdkit import Chem
+                frags = Chem.GetMolFrags(mol, asMols=True)
+                if not frags:
+                    chain_frags[ch].append(None)
+                    continue
+
+                max_ha = max(f.GetNumHeavyAtoms() for f in frags)
+                largest_frags = [f for f in frags if f.GetNumHeavyAtoms() == max_ha]
+
+                idx_map = {r: ii for ii, r in enumerate(struct.get_residues()) if r.id[0] == " "}
+
+                frag_pocket_pairs = []
+                for f in largest_frags:
+                    p_res = _pocket_from_mol(struct, f, 6.0)
+                    p_idxs = set(idx_map[r] for r in p_res if r in idx_map)
+                    frag_pocket_pairs.append((f, p_idxs))
+
+                if not frag_pocket_pairs:
+                    chain_frags[ch].append(None)
+                    continue
+
+                chain_frags[ch].append(frag_pocket_pairs)
+                has_any = True
+            except Exception:
+                chain_frags[ch].append(None)
+
+        if not has_any:
+            valid_mask[i] = False
+
+    valid_indices = [i for i in range(n) if valid_mask[i]]
+    if len(valid_indices) == 0:
+        return {}
+    if len(valid_indices) == 1:
+        idx = valid_indices[0]
+        return {1: (*unified_preds[idx], 1.0)}
+
+    avg_sucos = []
+    cache_updated = False
+
+    import concurrent.futures
+
+    def compute_sucos_row_multilig(i):
+        sucos_vals = []
+        method_i = method_names[i]
+        row_cache = {}
+
+        for j in valid_indices:
+            if i == j:
+                continue
+            method_j = method_names[j]
+
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                sucos_vals.append(pairwise_cache[method_i][method_j])
+                continue
+
+            best_leakage = 0.0
+
+            for ch_a in chain_ids:
+                fp_i = chain_frags[ch_a][i]
+                if fp_i is None:
+                    continue
+                for ch_b in chain_ids:
+                    if chain_smiles and chain_smiles.get(ch_a) != chain_smiles.get(ch_b):
+                        continue
+                    fp_j = chain_frags[ch_b][j]
+                    if fp_j is None:
+                        continue
+                    for f_i, p_i in fp_i:
+                        for f_j, p_j in fp_j:
+                            union = len(p_i | p_j)
+                            iou = len(p_i & p_j) / union if union > 0 else 0.0
+                            if iou == 0.0:
+                                continue
+                            val = ligand_sucos(f_i, f_j)
+                            leakage = iou * val
+                            if leakage > best_leakage:
+                                best_leakage = leakage
+
+            sucos_vals.append(best_leakage)
+            row_cache[method_j] = best_leakage
+
+        return i, method_i, sucos_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_sucos_row_multilig, i) for i in valid_indices]
+
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_sucos_vals, row_cache = future.result()
+
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+
+            for method_j, leakage in row_cache.items():
+                pairwise_cache[method_i][method_j] = leakage
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = leakage
+                cache_updated = True
+
+            avg_sucos.append((i, np.mean(row_sucos_vals) if row_sucos_vals else 0.0))
+
+    avg_sucos.sort(key=lambda x: x[0])
+
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save SuCOS multilig cache: {e}")
+
+    idx_to_avg = {entry[0]: entry[1] for entry in avg_sucos}
+    scored = [(idx, idx_to_avg.get(idx, 0.0)) for idx in valid_indices]
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    return {
+        rank + 1: (*unified_preds[idx], float(score))
+        for rank, (idx, score) in enumerate(scored)
+    }
+
+
+def rmsd_6a_consensus_rank_multilig(
+    predictions_by_chain: Dict[str, List[Tuple[str, str, str]]],
+    cache_path: Optional[str] = None,
+    pocket_cutoff: float = 6.0,
+    chain_smiles: Optional[Dict[str, str]] = None,
+) -> RankedPredictions:
+    """RMSD consensus ranking with pocket-only CA alignment across multiple ligand chains.
+
+    For each pair of models (i, j): for each cross-chain pair of ligands
+    (same SMILES only), find pocket residues, do Kabsch alignment, compute
+    ligand RMSD, take min. Models may be present in only a subset of chains.
+    """
+    import json
+    from Bio import PDB
+    from Bio.PDB.NeighborSearch import NeighborSearch
+
+    chain_ids = list(predictions_by_chain.keys())
+    if len(chain_ids) < 2:
+        return rmsd_6a_consensus_rank(predictions_by_chain[chain_ids[0]], cache_path=cache_path, pocket_cutoff=pocket_cutoff)
+
+    # Build per-chain lookup by model name
+    chain_lookup = {}
+    all_names = set()
+    for ch in chain_ids:
+        chain_lookup[ch] = {p[0]: p for p in predictions_by_chain[ch]}
+        all_names.update(chain_lookup[ch].keys())
+    method_names = sorted(all_names)
+    n = len(method_names)
+
+    unified_preds = []
+    for name in method_names:
+        for ch in chain_ids:
+            if name in chain_lookup[ch]:
+                unified_preds.append(chain_lookup[ch][name])
+                break
+
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception:
+            pairwise_cache = {}
+
+    parser = PDB.PDBParser(QUIET=True)
+
+    all_ca_by_reskey = []
+    chain_positions = {ch: [] for ch in chain_ids}
+    chain_pocket_reskeys = {ch: [] for ch in chain_ids}
+    valid_mask = [True] * n
+
+    for i in range(n):
+        _, pdb, _ = unified_preds[i]
+        try:
+            struct = parser.get_structure("X", pdb)
+        except Exception:
+            valid_mask[i] = False
+            all_ca_by_reskey.append({})
+            for ch in chain_ids:
+                chain_positions[ch].append(None)
+                chain_pocket_reskeys[ch].append(set())
+            continue
+
+        ca_by_reskey = {}
+        for r in struct.get_residues():
+            if r.id[0] != " ":
+                continue
+            if "CA" in r:
+                chain_id = r.get_parent().id
+                resseq = r.id[1]
+                ca_by_reskey[(chain_id, resseq)] = r["CA"].get_vector().get_array()
+
+        if len(ca_by_reskey) < 3:
+            valid_mask[i] = False
+            all_ca_by_reskey.append({})
+            for ch in chain_ids:
+                chain_positions[ch].append(None)
+                chain_pocket_reskeys[ch].append(set())
+            continue
+
+        all_ca_by_reskey.append(ca_by_reskey)
+
+        all_atoms = list(struct[0].get_atoms())
+        ns = NeighborSearch(all_atoms)
+
+        has_any = False
+        for ch in chain_ids:
+            pred = chain_lookup[ch].get(method_names[i])
+            if pred is None:
+                chain_positions[ch].append(None)
+                chain_pocket_reskeys[ch].append(set())
+                continue
+
+            pos = read_ligand_positions(pred[2])
+            if pos is None:
+                chain_positions[ch].append(None)
+                chain_pocket_reskeys[ch].append(set())
+                continue
+
+            chain_positions[ch].append(pos)
+            has_any = True
+
+            pocket_reskeys = set()
+            for lx, ly, lz in pos:
+                for r in ns.search(np.array([lx, ly, lz]), pocket_cutoff, level="R"):
+                    if r.id[0] == " " and "CA" in r:
+                        c_id = r.get_parent().id
+                        resseq = r.id[1]
+                        pocket_reskeys.add((c_id, resseq))
+
+            if len(pocket_reskeys) < 3:
+                pocket_reskeys = set(ca_by_reskey.keys())
+
+            chain_pocket_reskeys[ch].append(pocket_reskeys)
+
+        if not has_any:
+            valid_mask[i] = False
+
+    valid_indices = [i for i in range(n) if valid_mask[i]]
+    if len(valid_indices) == 0:
+        return {}
+    if len(valid_indices) == 1:
+        idx = valid_indices[0]
+        return {1: (*unified_preds[idx], 0.0)}
+
+    avg_rmsd = []
+    cache_updated = False
+
+    import concurrent.futures
+
+    def compute_rmsd_6a_row_multilig(i):
+        rmsd_vals = []
+        method_i = method_names[i]
+        row_cache = {}
+
+        for j in valid_indices:
+            if i == j:
+                continue
+            method_j = method_names[j]
+
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                rmsd_vals.append(pairwise_cache[method_i][method_j])
+                continue
+
+            ca_i = all_ca_by_reskey[i]
+            ca_j = all_ca_by_reskey[j]
+
+            min_rmsd = float("inf")
+
+            for ch_a in chain_ids:
+                pos_i = chain_positions[ch_a][i]
+                pocket_i = chain_pocket_reskeys[ch_a][i]
+                if pos_i is None:
+                    continue
+                for ch_b in chain_ids:
+                    if chain_smiles and chain_smiles.get(ch_a) != chain_smiles.get(ch_b):
+                        continue
+                    pos_j = chain_positions[ch_b][j]
+                    if pos_j is None:
+                        continue
+
+                    common_keys = sorted(k for k in pocket_i if k in ca_j)
+                    if len(common_keys) < 3:
+                        continue
+
+                    ref_coords = np.array([ca_i[k] for k in common_keys])
+                    mob_coords = np.array([ca_j[k] for k in common_keys])
+
+                    ref_center = ref_coords.mean(axis=0)
+                    mob_center = mob_coords.mean(axis=0)
+                    ref_c = ref_coords - ref_center
+                    mob_c = mob_coords - mob_center
+                    H = mob_c.T @ ref_c
+                    U, S, Vt = np.linalg.svd(H)
+                    d = np.linalg.det(Vt.T @ U.T)
+                    sign_matrix = np.diag([1, 1, d])
+                    rot = (Vt.T @ sign_matrix @ U.T).T
+                    tran = ref_center - mob_center @ rot
+
+                    aligned_pos_j = pos_j @ rot + tran
+                    diff = aligned_pos_j - pos_i
+                    dist = np.sqrt(np.sum(diff ** 2, axis=-1))
+                    rmsd = float(np.sqrt(np.mean(dist ** 2)))
+                    if rmsd < min_rmsd:
+                        min_rmsd = rmsd
+
+            if min_rmsd < float("inf"):
+                rmsd_vals.append(min_rmsd)
+                row_cache[method_j] = min_rmsd
+
+        return i, method_i, rmsd_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_rmsd_6a_row_multilig, i) for i in valid_indices]
+
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_rmsd_vals, row_cache = future.result()
+
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+
+            for method_j, rmsd in row_cache.items():
+                pairwise_cache[method_i][method_j] = rmsd
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = rmsd
+                cache_updated = True
+
+            avg_rmsd.append((i, np.mean(row_rmsd_vals) if row_rmsd_vals else 0.0))
+
+    avg_rmsd.sort(key=lambda x: x[0])
+
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save RMSD_6A multilig cache: {e}")
+
+    idx_to_avg = {entry[0]: entry[1] for entry in avg_rmsd}
+    scored = [(idx, idx_to_avg.get(idx, 0.0)) for idx in valid_indices]
+    scored.sort(key=lambda x: x[1])
+
+    return {
+        rank + 1: (*unified_preds[idx], float(score))
+        for rank, (idx, score) in enumerate(scored)
+    }
+
+
+def rmsd_8a_consensus_rank_multilig(predictions_by_chain, cache_path=None, chain_smiles=None):
+    return rmsd_6a_consensus_rank_multilig(predictions_by_chain, cache_path=cache_path, pocket_cutoff=8.0, chain_smiles=chain_smiles)
+
+
+def rmsd_10a_consensus_rank_multilig(predictions_by_chain, cache_path=None, chain_smiles=None):
+    return rmsd_6a_consensus_rank_multilig(predictions_by_chain, cache_path=cache_path, pocket_cutoff=10.0, chain_smiles=chain_smiles)
+
+
+def sucos_consensus_rank(
+    predictions: List[Tuple[str, str, str]],
+    aligned_dir: Optional[str] = None,
+    cache_path: Optional[str] = None,
+) -> RankedPredictions:
+    """SuCOS-based consensus ranking utilizing cached pockets and incremental caching."""
+    import json
+    from casp17_ligand.utils.pocket_metrics import ligand_sucos, load_ligand_mol, _get_pocket_residues
+    from Bio import PDB
+    
+    valid_predictions = []
+    mols = []
+    pockets = []
+    seen_positions = {}
+    
+    # Load cache if exists
+    pairwise_cache = {}
+    if cache_path and os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                pairwise_cache = json.load(f)
+        except Exception as e:
+            log.warning(f"Failed to load SuCOS cache: {e}")
+            pairwise_cache = {}
+            
+    parser = PDB.PDBParser(QUIET=True)
+
+    for pred in predictions:
+        method, pdb, sdf = pred
+        pos = read_ligand_positions(sdf)
+        if pos is None: continue
+        pos_key = tuple(map(tuple, pos))
+        if pos_key in seen_positions: continue
+        
+        mol = load_ligand_mol(sdf)
+        if mol is None: continue
+        
+        try:
+            struct = parser.get_structure("X", pdb)
+            from rdkit import Chem
+            from casp17_ligand.utils.pocket_metrics import _pocket_from_mol
+            
+            frags = Chem.GetMolFrags(mol, asMols=True)
+            if not frags: continue
+            
+            max_ha = max(f.GetNumHeavyAtoms() for f in frags)
+            largest_frags = [f for f in frags if f.GetNumHeavyAtoms() == max_ha]
+            
+            idx_map = {r: i for i, r in enumerate(struct.get_residues()) if r.id[0] == " "}
+            
+            target_frags = []
+            target_pockets = []
+            for f in largest_frags:
+                p_res = _pocket_from_mol(struct, f, 6.0)
+                p_idxs = set(idx_map[r] for r in p_res if r in idx_map)
+                target_frags.append(f)
+                target_pockets.append(p_idxs)
+                
+            if not target_frags:
+                continue
+                
+        except Exception:
+            continue
+            
+        seen_positions[pos_key] = True
+        valid_predictions.append(pred)
+        mols.append(target_frags)
+        pockets.append(target_pockets)
+
+    n = len(valid_predictions)
+    if n == 0: return {}
+    if n == 1: return {1: (valid_predictions[0][0], valid_predictions[0][1], valid_predictions[0][2], 1.0)}
+
+    avg_sucos = []
+    cache_updated = False
+    
+    # Precompute symmetric ligand SuCOS array (O3A self alignment) ON THE FLY using cache
+    import concurrent.futures
+
+    def compute_sucos_row(i):
+        sucos_vals = []
+        method_i = valid_predictions[i][0]
+        row_cache = {}
+        for j in range(n):
+            if i == j: continue
+            method_j = valid_predictions[j][0]
+            if method_i in pairwise_cache and method_j in pairwise_cache[method_i]:
+                sucos_vals.append(pairwise_cache[method_i][method_j])
+                continue
+            
+            best_leakage = 0.0
+            
+            # Cross-pairwise maximum SuCOS score across largest fragments
+            for f_i, p_i in zip(mols[i], pockets[i]):
+                for f_j, p_j in zip(mols[j], pockets[j]):
+                    union = len(p_i | p_j)
+                    iou = len(p_i & p_j) / union if union > 0 else 0.0
+                    if iou == 0.0:
+                        continue
+                    val = ligand_sucos(f_i, f_j)
+                    leakage = iou * val
+                    if leakage > best_leakage:
+                        best_leakage = leakage
+                        
+            sucos_vals.append(best_leakage)
+            row_cache[method_j] = best_leakage
+            
+        return i, method_i, sucos_vals, row_cache
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as executor:
+        futures = [executor.submit(compute_sucos_row, i) for i in range(n)]
+        for future in concurrent.futures.as_completed(futures):
+            i, method_i, row_sucos_vals, row_cache = future.result()
+            
+            if method_i not in pairwise_cache:
+                pairwise_cache[method_i] = {}
+                
+            for method_j, leakage in row_cache.items():
+                pairwise_cache[method_i][method_j] = leakage
+                if method_j not in pairwise_cache:
+                    pairwise_cache[method_j] = {}
+                pairwise_cache[method_j][method_i] = leakage
+                cache_updated = True
+                
+            avg_sucos.append((i, np.mean(row_sucos_vals) if row_sucos_vals else 0.0))
+
+    avg_sucos.sort(key=lambda x: x[0])
+    avg_sucos_arr = np.array([x[1] for x in avg_sucos])
+
+    # Save cache incrementally
+    if cache_updated and cache_path:
+        try:
+            with open(cache_path, "w") as f:
+                json.dump(pairwise_cache, f, indent=2)
+        except Exception as e:
+            log.warning(f"Failed to save SuCOS cache: {e}")
+
+    # Higher SuCOS is better
+    sorted_idx = np.argsort(avg_sucos_arr)[::-1]
+
+    return {
+        rank + 1: (*valid_predictions[idx], float(avg_sucos_arr[idx]))
+        for rank, idx in enumerate(sorted_idx)
+    }
+
+
+def run_posebusters(protein_pdb: str, ligand_sdf: str) -> bool:
+    """Run PoseBusters dock-mode validation on a single pose.
+
+    Returns True if the pose passes all key checks (same criteria as MULTICOM).
+    """
+    try:
+        buster = PoseBusters(config="dock", top_n=None)
+        bust_res = buster.bust([ligand_sdf], mol_cond=protein_pdb, full_report=False)
+        if "posebusters_dock" in bust_res.columns:
+            return bool(bust_res["posebusters_dock"].iloc[0])
+        elif "passes_testing" in bust_res.columns:
+            return bool(bust_res["passes_testing"].iloc[0])
+        return bool(bust_res.iloc[0].all()) 
+    except Exception as e:
+        log.warning(f"PoseBusters failed structurally on {ligand_sdf}: {e}")
+        return False
+
+
+def _prefilter_cifs(
+    method: str,
+    target: str,
+    cif_paths: List[str],
+    metric: str,
+    topn: int,
+    method_output_dir: str,
+    input_json_dir: str = "",
+) -> List[str]:
+    """Filter CIF paths by confidence metric, keeping top-N.
+
+    Uses score extraction from confidence_metric_analysis.
+    Falls back to original list if scores cannot be collected.
+    """
+    from casp17_ligand.analysis.confidence_metric_analysis import collect_scores
+    scores = collect_scores(metric, method, target, method_output_dir, input_json_dir)
+    if not scores:
+        return cif_paths
+
+    # Map ensemble index → cif path
+    from casp17_ligand.analysis.self_ranking_comparison import _get_ensemble_cif_list
+    ensemble_cifs = _get_ensemble_cif_list(method, target, method_output_dir)
+    canon_to_idx = {os.path.realpath(p): i for i, p in enumerate(ensemble_cifs)}
+
+    # Score each cif_path
+    scored = []
+    for cp in cif_paths:
+        idx = canon_to_idx.get(os.path.realpath(cp))
+        if idx is not None and idx in scores:
+            scored.append((scores[idx], cp))
+        else:
+            scored.append((float('-inf'), cp))  # unscored → lowest priority
+
+    scored.sort(key=lambda x: x[0], reverse=True)
+    filtered = [cp for _, cp in scored[:topn]]
+    log.info(f"  [{method}] {target}: prefilter {metric} top-{topn}/{len(cif_paths)} "
+             f"(score range: {scored[0][0]:.4f} → {scored[min(topn,len(scored))-1][0]:.4f})")
+    return filtered
+
+
+def _detect_ligand_chains(cif_path: str, prot_chain: str = "A") -> List[Tuple[str, int]]:
+    """Detect all ligand chains in a CIF and return [(chain_id, n_atoms), ...].
+
+    A ligand chain is any chain that is NOT a protein chain. Protein chains are
+    identified by having polymer atoms (>100 atoms typical for proteins). This
+    handles monomers, dimers, and multimers automatically.
+    """
+    try:
+        obj = f"detect_{os.path.basename(cif_path).replace('.', '_')}"
+        cmd.load(cif_path, obj)
+        chains = cmd.get_chains(obj)
+        # First pass: classify chains by size (protein chains are large)
+        chain_sizes = []
+        for ch in chains:
+            n_atoms = cmd.count_atoms(f'{obj} and chain "{ch}"')
+            chain_sizes.append((ch, n_atoms))
+        cmd.delete(obj)
+        if not chain_sizes:
+            return []
+        # Protein chains have >100 atoms; ligand chains are small
+        max_atoms = max(n for _, n in chain_sizes)
+        prot_threshold = max(100, max_atoms * 0.1)  # at least 100, or 10% of largest
+        result = [(ch, n) for ch, n in chain_sizes if 0 < n <= prot_threshold]
+        return result
+    except Exception as e:
+        log.warning(f"Failed to detect ligand chains in {cif_path}: {e}")
+        try:
+            cmd.delete("all")
+        except Exception:
+            pass
+        return []
+
+
+def _find_method_cifs(method_name: str, target: str, base_dir: str, n_models: int) -> list:
+    """Find CIF prediction files for a given method and target.
+
+    Centralizes method-specific CIF discovery logic to avoid duplication.
+    Returns list of CIF paths (up to n_models), or empty list if not found.
+    """
+    import glob as _glob
+
+    if method_name == "boltz2":
+        pred_dir = os.path.join(base_dir, f"boltz_results_{target}_input", "predictions")
+        if not os.path.isdir(pred_dir):
+            return []
+        subdirs = [d for d in os.listdir(pred_dir) if os.path.isdir(os.path.join(pred_dir, d))]
+        if not subdirs:
+            return []
+        subdir = subdirs[0]
+        return sorted(_glob.glob(os.path.join(pred_dir, subdir, f"{subdir}_model_*.cif")))[:n_models]
+
+    elif method_name == "af3":
+        for d in [os.path.join(base_dir, target, target.lower()),
+                  os.path.join(base_dir, target.lower()),
+                  os.path.join(base_dir, target)]:
+            if os.path.isdir(d):
+                cifs = sorted(_glob.glob(os.path.join(d, "*", "*_model.cif")))
+                if cifs:
+                    return cifs[:n_models]
+        return []
+
+    elif method_name == "protenix":
+        d = os.path.join(base_dir, target)
+        if not os.path.isdir(d):
+            return []
+        return sorted(_glob.glob(os.path.join(d, "seed_*", "predictions", f"{target}_sample_*.cif")))[:n_models]
+
+    elif method_name == "seedfold":
+        d = os.path.join(base_dir, target)
+        if not os.path.isdir(d):
+            return []
+        return sorted(_glob.glob(os.path.join(d, "*", "*.cif")))[:n_models]
+
+    elif method_name == "rf3":
+        if not os.path.isdir(base_dir):
+            return []
+        cifs = sorted(_glob.glob(os.path.join(base_dir, f"{target}_seed-*", "**", "*.cif"), recursive=True))
+        return [p for p in cifs if p.endswith("_model.cif")][:n_models]
+
+    return []
+
+
+def process_target(
+    target: str,
+    methods_cfg: DictConfig,
+    ensemble_output_dir: str,
+    smiles: Optional[str] = None,
+    export_top_n: int = 5,
+    prefilter_metric: Optional[str] = None,
+    prefilter_topn: Optional[int] = None,
+    lig_chain_override: Optional[str] = None,
+) -> Optional[pd.DataFrame]:
+    """Run full ensemble pipeline for one target (both RMSD and SuCOS ranking).
+
+    :param target: Target name, e.g. 'L1001'.
+    :param methods_cfg: Configuration dictionary mapping prediction methods to their specific output folders / parameters.
+    :param ensemble_output_dir: Root dir for ensemble outputs (under outputs/).
+    :param smiles: SMILES string for bond order assignment in SDF.
+    :param export_top_n: How many ranked poses to save per method.
+    :param prefilter_metric: Optional confidence metric for pre-filtering (pair_iptm/ligand_plddt/ranking_score).
+    :param prefilter_topn: Keep top-N models per method by prefilter_metric before ensemble.
+    :return: DataFrame with ranking results from both methods, or None on failure.
+    """
+    target_out = os.path.join(ensemble_output_dir, "targets", target)
+    cif_out = os.path.join(target_out, "cif_converted")
+    aligned_rmsd_out = os.path.join(target_out, "aligned_rmsd")
+    aligned_sucos_out = os.path.join(target_out, "aligned_sucos")
+    os.makedirs(cif_out, exist_ok=True)
+    err_log_path = os.path.join(ensemble_output_dir, "err.log")
+
+    # Input JSON dirs for prefilter score extraction
+    _input_dirs = {
+        "af3":       "data/test_cases/{dataset}/af3_inputs",
+        "protenix":  "data/test_cases/{dataset}/protenix_inputs",
+        "seedfold":  "data/test_cases/{dataset}/seedfold_inputs",
+    }
+
+    # Step 1: Gather predictions from all active methods into (method_name, pdb_path, sdf_path)
+    predictions = []
+
+    # Early check: is this a duplicate-ligand target? If so, skip regular single-chain
+    # extraction entirely and go directly to per-chain multilig path.
+    is_dup_lig = _has_duplicate_ligands(smiles, target=target)
+
+    def _auto_detect_chains(first_cif, method):
+        """Auto-detect protein and ligand chain IDs from first CIF file."""
+        prot_ch = "A0" if method == "seedfold" else "A"
+        lig_ch = "B0" if method == "seedfold" else "B"
+        lig_info = _detect_ligand_chains(first_cif)
+        if lig_info:
+            # Pick the largest ligand chain
+            max_n = max(n for _, n in lig_info)
+            lig_ch = [ch for ch, n in lig_info if n == max_n][0]
+            # Protein chain = largest chain overall (not a ligand chain)
+            all_lig_chs = {ch for ch, _ in lig_info}
+            try:
+                obj = f"autodetect_{os.path.basename(first_cif).replace('.', '_')}"
+                cmd.load(first_cif, obj)
+                all_chains = cmd.get_chains(obj)
+                prot_candidates = [(ch, cmd.count_atoms(f'{obj} and chain "{ch}"'))
+                                   for ch in all_chains if ch not in all_lig_chs]
+                cmd.delete(obj)
+                if prot_candidates:
+                    prot_ch = max(prot_candidates, key=lambda x: x[1])[0]
+            except Exception:
+                pass
+        return prot_ch, lig_ch
+
+    if is_dup_lig:
+        log.info(f"{target}: duplicate-ligand target detected, skipping regular single-chain extraction")
+
+    if not is_dup_lig:
+      for method_name, method_cfg in methods_cfg.items():
+        base_dir = method_cfg.get("output_dir", "")
+        n_models = method_cfg.get("n_models", 5)
+
+        if method_name == "boltz2":
+            boltz_pred_dir = os.path.join(base_dir, f"boltz_results_{target}_input", "predictions")
+            if not os.path.isdir(boltz_pred_dir):
+                log.warning(f"Boltz-2 output not found: {boltz_pred_dir}")
+                continue
+            # Auto-detect prediction subdirectory (may be "B" or "{target}_input")
+            import glob
+            boltz_subdirs = [d for d in os.listdir(boltz_pred_dir)
+                             if os.path.isdir(os.path.join(boltz_pred_dir, d))]
+            if not boltz_subdirs:
+                log.warning(f"Boltz-2 no prediction subdir in {boltz_pred_dir}")
+                continue
+            boltz_subdir = boltz_subdirs[0]
+            boltz_dir = os.path.join(boltz_pred_dir, boltz_subdir)
+            cif_paths = sorted(glob.glob(os.path.join(boltz_dir, f"{boltz_subdir}_model_*.cif")))
+            cif_paths = cif_paths[:n_models]
+            ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+            canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+            if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+            prot_ch, lig_ch = _auto_detect_chains(cif_paths[0], method_name) if cif_paths else ("A", "B")
+            for cif_path in cif_paths:
+                orig_idx = canon_to_idx.get(os.path.realpath(cif_path))
+                if orig_idx is None: continue
+                name = f"{target}_{method_name}_model_{orig_idx}"
+                pdb, sdf = cif_to_pdb_sdf(cif_path, cif_out, name, smiles=smiles,
+                                           prot_chain=prot_ch, lig_chain=lig_ch, err_log_path=err_log_path)
+                if pdb and sdf:
+                    predictions.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+        elif method_name == "af3":
+            # AF3 outputs: {base_dir}/{TARGET}/{target_lower}/seed-*/ (hellbender)
+            #           or {base_dir}/{target_lower}/seed-*/ (local Docker)
+            af3_dir = os.path.join(base_dir, target, target.lower())
+            if not os.path.isdir(af3_dir):
+                af3_dir = os.path.join(base_dir, target.lower())
+            if not os.path.isdir(af3_dir):
+                # Fallback: {base_dir}/{TARGET}/ (no lowercase subdir)
+                af3_dir = os.path.join(base_dir, target)
+            if not os.path.isdir(af3_dir):
+                log.warning(f"AF3 output not found for {target}")
+                continue
+            import glob
+            cif_paths = sorted(glob.glob(os.path.join(af3_dir, "*", "*_model.cif")))
+            cif_paths = cif_paths[:n_models]
+            ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+            canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+            if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+            prot_ch, lig_ch = _auto_detect_chains(cif_paths[0], method_name) if cif_paths else ("A", "C")
+            for cif_path in cif_paths:
+                orig_idx = canon_to_idx.get(os.path.realpath(cif_path))
+                if orig_idx is None: continue
+                name = f"{target}_{method_name}_model_{orig_idx}"
+                pdb, sdf = cif_to_pdb_sdf(cif_path, cif_out, name, smiles=smiles,
+                                           prot_chain=prot_ch, lig_chain=lig_ch, err_log_path=err_log_path)
+                if pdb and sdf:
+                    predictions.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+        elif method_name == "protenix":
+            protenix_dir = os.path.join(base_dir, target)
+            if not os.path.isdir(protenix_dir):
+                log.warning(f"Protenix output not found: {protenix_dir}")
+                continue
+            import glob
+            cif_paths = sorted(glob.glob(os.path.join(protenix_dir, "seed_*", "predictions", f"{target}_sample_*.cif")))
+            cif_paths = cif_paths[:n_models]
+            ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+            canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+            if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+            prot_ch, lig_ch = _auto_detect_chains(cif_paths[0], method_name) if cif_paths else ("A", "C")
+            for cif_path in cif_paths:
+                orig_idx = canon_to_idx.get(os.path.realpath(cif_path))
+                if orig_idx is None: continue
+                name = f"{target}_{method_name}_model_{orig_idx}"
+                pdb, sdf = cif_to_pdb_sdf(cif_path, cif_out, name, smiles=smiles,
+                                           prot_chain=prot_ch, lig_chain=lig_ch, err_log_path=err_log_path)
+                if pdb and sdf:
+                    predictions.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+        elif method_name == "rf3":
+            # RF3 structure: outputs/rf3/casp16_l1000/L1001_seed-0/L1001/ seed dirs
+            rf3_dir = base_dir
+            if not os.path.isdir(rf3_dir):
+                log.warning(f"RF3 output not found: {rf3_dir}")
+                continue
+            import glob
+            cif_paths = sorted(glob.glob(os.path.join(rf3_dir, f"{target}_seed-*", "**", "*.cif"), recursive=True))
+            cif_paths = [p for p in cif_paths if p.endswith("_model.cif")]
+            cif_paths = cif_paths[:n_models]
+            ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+            canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+            if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+            prot_ch, lig_ch = _auto_detect_chains(cif_paths[0], method_name) if cif_paths else ("A", "B")
+            for cif_path in cif_paths:
+                orig_idx = canon_to_idx.get(os.path.realpath(cif_path))
+                if orig_idx is None: continue
+                name = f"{target}_{method_name}_model_{orig_idx}"
+                pdb, sdf = cif_to_pdb_sdf(cif_path, cif_out, name, smiles=smiles,
+                                           prot_chain=prot_ch, lig_chain=lig_ch, err_log_path=err_log_path)
+                if pdb and sdf:
+                    predictions.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+        elif method_name == "seedfold":
+            # Seedfold structure: {base_dir}/{target}/{target}_model_{N}/{target}_model_{N}_model_{M}.cif
+            seedfold_dir = os.path.join(base_dir, target)
+            if not os.path.isdir(seedfold_dir):
+                log.warning(f"Seedfold output not found: {seedfold_dir}")
+                continue
+            import glob
+            cif_paths = sorted(glob.glob(os.path.join(seedfold_dir, "*", "*.cif")))
+            cif_paths = cif_paths[:n_models]
+            ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+            canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+            if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+            prot_ch, lig_ch = _auto_detect_chains(cif_paths[0], method_name) if cif_paths else ("A0", "B0")
+            for cif_path in cif_paths:
+                orig_idx = canon_to_idx.get(os.path.realpath(cif_path))
+                if orig_idx is None: continue
+                name = f"{target}_{method_name}_model_{orig_idx}"
+                pdb, sdf = cif_to_pdb_sdf(
+                    cif_path, cif_out, name, smiles=smiles,
+                    prot_chain=prot_ch, lig_chain=lig_ch,
+                    err_log_path=err_log_path,
+                )
+                if pdb and sdf:
+                    predictions.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+        else:
+            log.warning(f"Unsupported method parsing for {method_name}")
+
+    # Early return for non-multilig targets with no predictions
+    if not predictions and not is_dup_lig:
+        log.warning(f"No valid predictions across any method for {target}")
+        return None
+
+    if predictions:
+        log.info(f"{target}: converted {len(predictions)} CIF files")
+
+    rows = []
+
+    def _save_ranked(ranked, score_key, score_fmt, method_suffix, out_subdir):
+        if os.path.exists(out_subdir):
+            shutil.rmtree(out_subdir)
+        os.makedirs(out_subdir, exist_ok=True)
+        
+        candidates = []
+        for orig_rank, (method, pdb, sdf, score) in ranked.items():
+            if export_top_n is not None and orig_rank > export_top_n:
+                candidates.append({
+                    "orig_rank": orig_rank, "method": method, "pdb": pdb, "sdf": sdf, "score": score,
+                    "pb_valid": False, "tested": False
+                })
+            else:
+                pb_valid = run_posebusters(pdb, sdf)
+                candidates.append({
+                    "orig_rank": orig_rank, "method": method, "pdb": pdb, "sdf": sdf, "score": score,
+                    "pb_valid": pb_valid, "tested": True
+                })
+                
+        tested = [c for c in candidates if c["tested"]]
+        untested = [c for c in candidates if not c["tested"]]
+        
+        # Sort tested models: Priority 1: pb_valid=True over False, Priority 2: original rank
+        tested.sort(key=lambda x: (not x["pb_valid"], x["orig_rank"]))
+        
+        if tested and all(not c["pb_valid"] for c in tested):
+            log_msg = f"[{target}] [{method_suffix}] All top-{len(tested)} models failed PoseBusters checks."
+            log.warning(log_msg)
+            err_log_path = os.path.join(ensemble_output_dir, "err.log")
+            with open(err_log_path, "a") as f:
+                f.write(log_msg + "\n")
+                
+        final_candidates = tested + untested
+        
+        for idx, c in enumerate(final_candidates):
+            new_rank = idx + 1
+            out_sdf = os.path.join(out_subdir, f"{c['method']}_rank{new_rank}_orig{c['orig_rank']}_{score_fmt.format(c['score'])}_pb={c['pb_valid']}.sdf")
+            out_pdb = os.path.join(out_subdir, f"{c['method']}_rank{new_rank}_orig{c['orig_rank']}_{score_fmt.format(c['score'])}.pdb")
+            shutil.copy2(c["sdf"], out_sdf)
+            shutil.copy2(c["pdb"], out_pdb)
+            
+            rows.append({
+                "target": target,
+                "ranking_method": method_suffix,
+                "rank": new_rank,
+                "orig_rank": c["orig_rank"],
+                "method": c["method"],
+                score_key: c["score"],
+                "pb_valid": c["pb_valid"],
+                "sdf": out_sdf,
+                "pdb": out_pdb,
+            })
+            log.info(f"  [{method_suffix}] rank{new_rank} (orig {c['orig_rank']}): {c['method']}, {score_key}={c['score']:.3f}, pb_valid={c['pb_valid']}")
+
+    def _ranking_exists(subdir):
+        """Check if a ranking dir already has SDF outputs (skip redundant PB)."""
+        d = os.path.join(target_out, subdir)
+        return os.path.isdir(d) and any(f.endswith(".sdf") for f in os.listdir(d))
+
+    # Detect duplicate ligand chains once (shared by all consensus methods)
+    # is_dup_lig already computed above (before regular loop)
+    dup_chains = []
+    dup_chain_smiles = {}
+    if is_dup_lig:
+        import glob as glob_mod
+        first_cif = None
+        first_method = None
+        for method_name, method_cfg in methods_cfg.items():
+            base_dir = method_cfg.get("output_dir", "")
+            if method_name == "af3":
+                af3_dir = os.path.join(base_dir, target, target.lower())
+                if not os.path.isdir(af3_dir):
+                    af3_dir = os.path.join(base_dir, target.lower())
+                if not os.path.isdir(af3_dir):
+                    af3_dir = os.path.join(base_dir, target)
+                if os.path.isdir(af3_dir):
+                    cifs = sorted(glob_mod.glob(os.path.join(af3_dir, "*", "*_model.cif")))
+                    if cifs:
+                        first_cif = cifs[0]
+                        first_method = method_name
+                        break
+            elif method_name == "boltz2":
+                boltz_pred_dir = os.path.join(base_dir, f"boltz_results_{target}_input", "predictions")
+                if os.path.isdir(boltz_pred_dir):
+                    bsubs = [d for d in os.listdir(boltz_pred_dir) if os.path.isdir(os.path.join(boltz_pred_dir, d))]
+                    if bsubs:
+                        bdir = os.path.join(boltz_pred_dir, bsubs[0])
+                        cifs = sorted(glob_mod.glob(os.path.join(bdir, f"{bsubs[0]}_model_*.cif")))
+                        if cifs:
+                            first_cif = cifs[0]
+                            first_method = method_name
+                            break
+        if first_cif:
+            prot_ch = "A0" if first_method == "seedfold" else "A"
+            lig_info = _detect_ligand_chains(first_cif, prot_chain=prot_ch)
+            if len(lig_info) >= 2:
+                max_atoms = max(n for _, n in lig_info)
+                dup_chains = [ch for ch, n in lig_info if n == max_atoms]
+
+    # Build per-chain predictions for duplicate-ligand targets (shared by all consensus methods)
+    dup_predictions_by_chain = {}
+    if is_dup_lig and len(dup_chains) >= 2:
+        log.info(f"{target}: duplicate ligand chains detected: {dup_chains}")
+
+        # Derive per-chain sub-SMILES by matching heavy atom count from CIF chain
+        # to the SMILES fragments (split by ':' or '.')
+        dup_chain_smiles = {}
+        if smiles:
+            smiles_norm = smiles.replace(':', '.')
+            smi_parts = [s.strip() for s in smiles_norm.split('.') if s.strip()]
+            # Build HA count -> SMILES list mapping
+            from collections import defaultdict
+            ha_to_smi = defaultdict(list)
+            for s in smi_parts:
+                mol = Chem.MolFromSmiles(s)
+                if mol:
+                    ha_to_smi[mol.GetNumHeavyAtoms()].append(s)
+            # Match each dup chain to a SMILES by its atom count
+            for ch, n_atoms in [(c, n) for c, n in lig_info if c in dup_chains]:
+                matched = ha_to_smi.get(n_atoms, [])
+                if matched:
+                    dup_chain_smiles[ch] = matched[0]
+                    log.info(f"  Chain {ch} ({n_atoms} atoms) matched to SMILES: {matched[0][:50]}...")
+                else:
+                    dup_chain_smiles[ch] = None
+                    log.warning(f"  Chain {ch} ({n_atoms} atoms): no matching SMILES found")
+
+        for lig_ch in dup_chains:
+            dup_cif_out = os.path.join(cif_out, f"lig_{lig_ch}")
+            os.makedirs(dup_cif_out, exist_ok=True)
+            dup_preds = []
+            for method_name, method_cfg in methods_cfg.items():
+                base_dir = method_cfg.get("output_dir", "")
+                n_models = method_cfg.get("n_models", 5)
+                prot_ch = "A0" if method_name == "seedfold" else "A"
+                lig_chain_for_method = lig_ch
+                if method_name == "seedfold":
+                    if lig_ch == "B":
+                        lig_chain_for_method = "B0"
+                    elif lig_ch == "C":
+                        lig_chain_for_method = "D0"
+
+                ensemble_cifs = _get_ensemble_cif_list(method_name, target, base_dir)
+                canon_to_idx = {os.path.realpath(p): idx for idx, p in enumerate(ensemble_cifs)}
+
+                if method_name == "af3":
+                    af3_dir = os.path.join(base_dir, target, target.lower())
+                    if not os.path.isdir(af3_dir):
+                        af3_dir = os.path.join(base_dir, target.lower())
+                    if not os.path.isdir(af3_dir):
+                        af3_dir = os.path.join(base_dir, target)
+                    if not os.path.isdir(af3_dir):
+                        continue
+                    cif_paths = sorted(glob_mod.glob(os.path.join(af3_dir, "*", "*_model.cif")))[:n_models]
+                    if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                        cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+                    for cp in cif_paths:
+                        orig_idx = canon_to_idx.get(os.path.realpath(cp))
+                        if orig_idx is None: continue
+                        name = f"{target}_{method_name}_model_{orig_idx}_lig{lig_ch}"
+                        pdb, sdf = cif_to_pdb_sdf(cp, dup_cif_out, name, smiles=dup_chain_smiles.get(lig_ch, smiles),
+                                                   prot_chain=prot_ch, lig_chain=lig_chain_for_method,
+                                                   err_log_path=err_log_path)
+                        if pdb and sdf:
+                            dup_preds.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+                elif method_name == "boltz2":
+                    boltz_pred_dir = os.path.join(base_dir, f"boltz_results_{target}_input", "predictions")
+                    if not os.path.isdir(boltz_pred_dir):
+                        continue
+                    boltz_subdirs = [d for d in os.listdir(boltz_pred_dir)
+                                     if os.path.isdir(os.path.join(boltz_pred_dir, d))]
+                    if not boltz_subdirs:
+                        continue
+                    boltz_subdir = boltz_subdirs[0]
+                    boltz_dir = os.path.join(boltz_pred_dir, boltz_subdir)
+                    cif_paths = sorted(glob_mod.glob(os.path.join(boltz_dir, f"{boltz_subdir}_model_*.cif")))[:n_models]
+                    if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                        cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+                    for cp in cif_paths:
+                        orig_idx = canon_to_idx.get(os.path.realpath(cp))
+                        if orig_idx is None: continue
+                        name = f"{target}_{method_name}_model_{orig_idx}_lig{lig_ch}"
+                        pdb, sdf = cif_to_pdb_sdf(cp, dup_cif_out, name, smiles=dup_chain_smiles.get(lig_ch, smiles),
+                                                   prot_chain=prot_ch, lig_chain=lig_chain_for_method,
+                                                   err_log_path=err_log_path)
+                        if pdb and sdf:
+                            dup_preds.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+                elif method_name == "protenix":
+                    protenix_dir = os.path.join(base_dir, target)
+                    if not os.path.isdir(protenix_dir):
+                        continue
+                    cif_paths = sorted(glob_mod.glob(os.path.join(protenix_dir, "seed_*", "predictions", f"{target}_sample_*.cif")))[:n_models]
+                    if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                        cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+                    for cp in cif_paths:
+                        orig_idx = canon_to_idx.get(os.path.realpath(cp))
+                        if orig_idx is None: continue
+                        name = f"{target}_{method_name}_model_{orig_idx}_lig{lig_ch}"
+                        pdb, sdf = cif_to_pdb_sdf(cp, dup_cif_out, name, smiles=dup_chain_smiles.get(lig_ch, smiles),
+                                                   prot_chain=prot_ch, lig_chain=lig_chain_for_method,
+                                                   err_log_path=err_log_path)
+                        if pdb and sdf:
+                            dup_preds.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+                elif method_name == "seedfold":
+                    seedfold_dir = os.path.join(base_dir, target)
+                    if not os.path.isdir(seedfold_dir):
+                        continue
+                    cif_paths = sorted(glob_mod.glob(os.path.join(seedfold_dir, "*", "*.cif")))[:n_models]
+                    if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                        cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+                    for cp in cif_paths:
+                        orig_idx = canon_to_idx.get(os.path.realpath(cp))
+                        if orig_idx is None: continue
+                        name = f"{target}_{method_name}_model_{orig_idx}_lig{lig_ch}"
+                        pdb, sdf = cif_to_pdb_sdf(cp, dup_cif_out, name, smiles=dup_chain_smiles.get(lig_ch, smiles),
+                                                   prot_chain="A0", lig_chain=lig_chain_for_method,
+                                                   err_log_path=err_log_path)
+                        if pdb and sdf:
+                            dup_preds.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+                elif method_name == "rf3":
+                    rf3_dir = base_dir
+                    if not os.path.isdir(rf3_dir):
+                        continue
+                    cif_paths = sorted(glob_mod.glob(os.path.join(rf3_dir, f"{target}_seed-*", "**", "*.cif"), recursive=True))
+                    cif_paths = [p for p in cif_paths if p.endswith("_model.cif")][:n_models]
+                    if prefilter_metric and prefilter_topn and prefilter_topn < len(cif_paths):
+                        cif_paths = _prefilter_cifs(method_name, target, cif_paths, prefilter_metric, prefilter_topn, base_dir)
+                    for cp in cif_paths:
+                        orig_idx = canon_to_idx.get(os.path.realpath(cp))
+                        if orig_idx is None: continue
+                        name = f"{target}_{method_name}_model_{orig_idx}_lig{lig_ch}"
+                        pdb, sdf = cif_to_pdb_sdf(cp, dup_cif_out, name, smiles=dup_chain_smiles.get(lig_ch, smiles),
+                                                   prot_chain=prot_ch, lig_chain=lig_chain_for_method,
+                                                   err_log_path=err_log_path)
+                        if pdb and sdf:
+                            dup_preds.append((f"{method_name}_model{orig_idx}", pdb, sdf))
+
+            # Cap at 200 models per chain: non-AF3 methods get up to 50 each,
+            # AF3 expands from 50 to min(100, remaining) when methods are missing.
+            MAX_MODELS_PER_CHAIN = 200
+            DEFAULT_PER_METHOD = 50
+            if len(dup_preds) > MAX_MODELS_PER_CHAIN:
+                from collections import defaultdict as _ddict
+                by_method = _ddict(list)
+                for pred in dup_preds:
+                    method_prefix = pred[0].split("_model")[0]
+                    by_method[method_prefix].append(pred)
+
+                capped = []
+                non_af3_count = 0
+                for method, preds in sorted(by_method.items()):
+                    if method != "af3":
+                        selected = preds[:DEFAULT_PER_METHOD]
+                        capped.extend(selected)
+                        non_af3_count += len(selected)
+
+                af3_preds = by_method.get("af3", [])
+                af3_limit = min(100, MAX_MODELS_PER_CHAIN - non_af3_count)
+                capped.extend(af3_preds[:max(af3_limit, DEFAULT_PER_METHOD)])
+                dup_preds = capped[:MAX_MODELS_PER_CHAIN]
+                log.info(f"  {target} chain {lig_ch}: capped to {len(dup_preds)} models (AF3: {min(len(af3_preds), af3_limit)})")
+
+            dup_predictions_by_chain[lig_ch] = dup_preds
+
+    # Step 2a: RMSD consensus ranking
+    rmsd_cache_path = os.path.join(target_out, "pairwise_rmsd_cache.json")
+    if is_dup_lig and len(dup_chains) >= 2 and dup_predictions_by_chain:
+        ranked_rmsd = rmsd_consensus_rank_multilig(dup_predictions_by_chain, aligned_dir=None, cache_path=rmsd_cache_path, chain_smiles=dup_chain_smiles)
+    else:
+        ranked_rmsd = rmsd_consensus_rank(predictions, aligned_dir=None, cache_path=rmsd_cache_path)
+
+    # Step 2b: SuCOS consensus ranking
+    sucos_cache_path = os.path.join(target_out, "pairwise_sucos_cache.json")
+    if is_dup_lig and len(dup_chains) >= 2 and dup_predictions_by_chain:
+        ranked_sucos = sucos_consensus_rank_multilig(dup_predictions_by_chain, aligned_dir=None, cache_path=sucos_cache_path, chain_smiles=dup_chain_smiles)
+    else:
+        ranked_sucos = sucos_consensus_rank(predictions, aligned_dir=None, cache_path=sucos_cache_path)
+
+    # Step 2c: RMSD_6A consensus ranking (pocket-only alignment)
+    rmsd_6a_cache_path = os.path.join(target_out, "pairwise_rmsd_6a_cache.json")
+    if is_dup_lig and len(dup_chains) >= 2 and dup_predictions_by_chain:
+        ranked_rmsd_6a = rmsd_6a_consensus_rank_multilig(dup_predictions_by_chain, cache_path=rmsd_6a_cache_path, chain_smiles=dup_chain_smiles)
+    else:
+        ranked_rmsd_6a = rmsd_6a_consensus_rank(predictions, cache_path=rmsd_6a_cache_path)
+
+    # RMSD_8A and RMSD_10A skipped to save compute time (RMSD_6A is sufficient)
+
+    if ranked_rmsd and not _ranking_exists("ranking_rmsd"):
+        _save_ranked(ranked_rmsd, "avg_rmsd", "rmsd{:.2e}", "rmsd", os.path.join(target_out, "ranking_rmsd"))
+    if ranked_sucos and not _ranking_exists("ranking_sucos"):
+        _save_ranked(ranked_sucos, "avg_sucos", "sucos{:.3f}", "sucos", os.path.join(target_out, "ranking_sucos"))
+    if ranked_rmsd_6a and not _ranking_exists("ranking_rmsd_6a"):
+        _save_ranked(ranked_rmsd_6a, "avg_rmsd_6a", "rmsd6a{:.2e}", "rmsd_6a", os.path.join(target_out, "ranking_rmsd_6a"))
+
+    return pd.DataFrame(rows) if rows else None
+
+
+def _target_is_complete(ensemble_output_dir: str, target: str) -> bool:
+    """Check if a target already has completed ranking outputs (RMSD, SuCOS, and RMSD_6A)."""
+    target_out = os.path.join(ensemble_output_dir, "targets", target)
+    for subdir in ["ranking_rmsd", "ranking_sucos", "ranking_rmsd_6a"]:
+        d = os.path.join(target_out, subdir)
+        if not os.path.isdir(d):
+            return False
+        if not any(f.endswith(".sdf") for f in os.listdir(d)):
+            return False
+    return True
+
+
+def _worker_init():
+    """Initialize PyMOL in each worker process."""
+    import pymol
+    pymol.finish_launching(["pymol", "-qc"])
+
+
+def _process_target_worker(args):
+    """Worker function for multiprocessing. Wraps process_target with picklable args."""
+    target, methods_cfg_dict, ensemble_output_dir, smiles, export_top_n, prefilter_metric, prefilter_topn = args
+    from omegaconf import OmegaConf
+    methods_cfg = OmegaConf.create(methods_cfg_dict)
+    try:
+        result = process_target(
+            target=target,
+            methods_cfg=methods_cfg,
+            ensemble_output_dir=ensemble_output_dir,
+            smiles=smiles,
+            export_top_n=export_top_n,
+            prefilter_metric=prefilter_metric,
+            prefilter_topn=prefilter_topn,
+        )
+        return target, result
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Worker failed for {target}: {e}")
+        return target, None
+
+
+@hydra.main(
+    version_base="1.3",
+    config_path="../../configs/model",
+    config_name="ensemble_generation",
+)
+def main(cfg: DictConfig) -> None:
+    """Run ensemble generation for all targets in a dataset."""
+    from omegaconf import OmegaConf
+
+    os.makedirs(cfg.ensemble_output_dir, exist_ok=True)
+    df = pd.read_csv(cfg.input_csv)
+    targets = df["target"].tolist()
+    smiles_map = dict(zip(df["target"], df["ligand_smiles"]))
+
+    # Skip already-completed targets
+    pending_targets = []
+    skipped = 0
+    for target in targets:
+        if _target_is_complete(cfg.ensemble_output_dir, target):
+            skipped += 1
+        else:
+            pending_targets.append(target)
+    log.info(f"Dataset {cfg.dataset}: {len(targets)} total, {skipped} skipped (complete), {len(pending_targets)} pending")
+
+    if not pending_targets:
+        log.info("All targets already complete, nothing to do")
+        return
+
+    # Prepare picklable args for workers
+    methods_cfg_dict = OmegaConf.to_container(cfg.get("methods", {}), resolve=True)
+    export_top_n = cfg.get("export_top_n", None)
+    prefilter_metric = cfg.get("prefilter_metric", None)
+    prefilter_topn = cfg.get("prefilter_topn", None)
+    if prefilter_metric:
+        log.info(f"Pre-filtering enabled: {prefilter_metric} top-{prefilter_topn}")
+    worker_args = [
+        (target, methods_cfg_dict, cfg.ensemble_output_dir, smiles_map.get(target),
+         export_top_n, prefilter_metric, prefilter_topn)
+        for target in pending_targets
+    ]
+
+    num_workers = cfg.get("num_workers", 16)
+    all_results = []
+
+    if num_workers <= 1:
+        # Serial mode for debugging
+        pymol.finish_launching(["pymol", "-qc"])
+        for args in worker_args:
+            target, result = _process_target_worker(args)
+            if result is not None:
+                all_results.append(result)
+    else:
+        # Parallel mode with multiprocessing
+        log.info(f"Launching {num_workers} parallel workers")
+        with multiprocessing.Pool(processes=num_workers, initializer=_worker_init) as pool:
+            for target, result in pool.imap_unordered(_process_target_worker, worker_args):
+                if result is not None:
+                    all_results.append(result)
+                    log.info(f"Completed {target} ({len(all_results)}/{len(pending_targets)})")
+
+    if all_results:
+        summary = pd.concat(all_results, ignore_index=True)
+        summary_path = os.path.join(cfg.ensemble_output_dir, "ranking_summary.csv")
+        summary.to_csv(summary_path, index=False)
+        log.info(f"Saved ranking summary → {summary_path}")
+        for method in ["rmsd", "sucos", "rmsd_6a", "rmsd_8a", "rmsd_10a"]:
+            sub = summary[summary["ranking_method"] == method]
+            rank1 = sub[sub["rank"] == 1]
+            if len(rank1):
+                log.info(f"PoseBusters pass rate [{method}] rank-1: {rank1['pb_valid'].sum()}/{len(rank1)}")
+
+
+if __name__ == "__main__":
+    main()

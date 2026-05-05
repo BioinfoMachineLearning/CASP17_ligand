@@ -1,0 +1,32 @@
+dataset: casp16_l1000_r1r2
+input_csv: data/test_cases/casp16_l1000/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble_r1r2/${dataset}
+
+methods:
+  boltz2:
+    output_dirs:
+      - outputs/boltz2/casp16_l1000
+      - outputs/boltz2/casp16_l1000_r2
+    n_models: 50
+  af3:
+    output_dirs:
+      - outputs/alphafold3/casp16_l1000
+      - outputs/alphafold3/casp16_l1000_r2
+    n_models: 50
+  protenix:
+    output_dirs:
+      - outputs/protenix/casp16_l1000
+      - outputs/protenix/casp16_l1000_r2
+    n_models: 50
+  seedfold:
+    output_dirs:
+      - outputs/seedfold/casp16_l1000
+      - outputs/seedfold/casp16_l1000_r2
+    n_models: 50
+
+prefilter_metric: pocket_plddt_4.5
+prefilter_topn: 50
+
+export_top_n: null
+
+num_workers: 8

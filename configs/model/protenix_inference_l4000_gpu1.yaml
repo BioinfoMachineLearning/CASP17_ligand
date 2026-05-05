@@ -1,0 +1,30 @@
+# @package _global_
+
+dataset: casp16_l4000
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/${dataset}
+
+env_name: protenix
+gpu_device: 1
+
+protenix_root_dir: /bmlfast/Lyuwei/0.Projects/CASP17_ligand/weights/protenix
+seqres_database_path: /bmlfast/databases/pdb_seqres_2022_09_28.fasta
+msa_dir: null
+
+model_name: protenix_base_default_v1.0.0
+seeds: "101,102,103,104,105,106,107,108,109,110"
+dtype: bf16
+
+use_msa: true
+use_template: true
+use_rna_msa: false
+enable_cache: true
+
+cycle: 10
+step: 200
+n_sample: 5
+
+# First 10 targets → GPU 1
+targets: [L4001,L4002,L4003,L4004,L4011,L4013,L4014,L4015,L4016,L4017]
+
+override: false

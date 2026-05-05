@@ -1,0 +1,24 @@
+dataset: casp15
+input_csv: data/test_cases/${dataset}/ensemble_inputs_v2.csv
+ensemble_output_dir: outputs/ensemble/${dataset}
+
+methods:
+  boltz2:
+    output_dir: outputs/boltz2/${dataset}
+    n_models: 100
+  af3:
+    output_dir: outputs/alphafold3/${dataset}
+    n_models: 101
+  protenix:
+    output_dir: outputs/protenix/${dataset}
+    n_models: 100
+  seedfold:
+    output_dir: outputs/seedfold/${dataset}
+    n_models: 100
+
+num_workers: 16
+export_top_n: null
+
+# No pre-filtering for initial run (need full pairwise cache)
+prefilter_metric: null
+prefilter_topn: null

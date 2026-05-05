@@ -1,0 +1,28 @@
+# @package _global_
+
+dataset: casp16_l3000_struct_zn
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/${dataset}
+
+env_name: protenix
+gpu_device: 2
+
+protenix_root_dir: /bmlfast/Lyuwei/0.Projects/CASP17_ligand/weights/protenix
+seqres_database_path: /bmlfast/databases/pdb_seqres_2022_09_28.fasta
+msa_dir: null
+
+model_name: protenix_base_default_v1.0.0
+seeds: "101,102,103,104,105,106,107,108,109,110"
+dtype: bf16
+
+use_msa: true
+use_template: true
+use_rna_msa: false
+enable_cache: true
+
+cycle: 10
+step: 200
+n_sample: 5
+
+targets: [L3105,L3106,L3107,L3108,L3109,L3110,L3111,L3112,L3113,L3114,L3115,L3117,L3118,L3119,L3120,L3121,L3122,L3123,L3124,L3125,L3126,L3127,L3128,L3129,L3130,L3131,L3132,L3133,L3134,L3135,L3136,L3137,L3138,L3139,L3140,L3141,L3142,L3143,L3144,L3145,L3146,L3148,L3149,L3150,L3151,L3152,L3153,L3154,L3155,L3156,L3157,L3158,L3159,L3160,L3161,L3162,L3163,L3164,L3165,L3166,L3167,L3168,L3169,L3170,L3171,L3172,L3173,L3174,L3175,L3176,L3177,L3178,L3179,L3180,L3181,L3182,L3183,L3184,L3185,L3186,L3187,L3188,L3189,L3190,L3191,L3192,L3193,L3194,L3196,L3197,L3198,L3199,L3200,L3201]
+override: false
