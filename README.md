@@ -85,7 +85,7 @@ python casp17_ligand/models/protenix_inference.py dataset=YOUR_DATASET
 ### Optimized Parameters / Notes
 - **Hardware Requirements**: Protenix requires GPUs with substantial VRAM (e.g., V100 32GB or A100).
 - **Sampling Strategy**: For optimal coverage and high-quality prediction ensembles, it is recommended to run multiple seeds per target. A standard configuration is **10 seeds × 5 samples = 50 models** per target.
-- **Model Version**: The configuration uses `protenix_base_20250630_v1.0.0` by default. This is the applied version with an updated training data cutoff (2025-06-30), offering stronger practical performance for real-world prediction (like CASP17) compared to the standard benchmark model.
+- **Model Version**: The configuration currently defaults to `protenix_base_default_v1.0.0` (with 2021 data cutoff) because its weights are already downloaded locally. For better practical performance (e.g., CASP17), you can download the weights for the applied version (`protenix_base_20250630_v1.0.0`) and update `model_name` in your YAML config.
 - **High-Precision Settings**: To push for the best structural accuracy, use the following parameters (override the fast defaults):
   - `cycle`: **10** (Recycling steps)
   - `step`: **200** (Diffusion sampling steps)
