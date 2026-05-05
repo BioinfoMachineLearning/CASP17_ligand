@@ -19,7 +19,7 @@ seqres_database_path: /bmlfast/databases/pdb_seqres_2022_09_28.fasta
 msa_dir: null
 
 # ── Model & Inference Parameters ──────────────────────────────────────
-model_name: protenix_base_default_v1.0.0
+model_name: protenix_base_20250630_v1.0.0
 seeds: "101,102,103,104,105,106,107,108,109,110"   # 10 seeds
 dtype: bf16
 
