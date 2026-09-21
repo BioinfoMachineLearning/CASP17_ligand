@@ -1,0 +1,8 @@
+# @package _global_
+
+series: L1000
+dataset: casp16_l1000
+output_dir: data/test_cases/${dataset}/af3_inputs
+num_seeds: 5
+ref_data_json: null  # path to completed AF3 *_data.json with MSA; null = run data pipeline
+struct_only: true  # only targets with GT in struct/L{X}000_prepared/

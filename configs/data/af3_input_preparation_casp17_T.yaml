@@ -1,0 +1,23 @@
+# @package _global_
+# CASP17 protein-with-ligand series (T2383 etc.)
+#
+# Run:
+#   conda run -n casp17_ligand python casp17_ligand/data/af3_input_preparation.py \
+#       --config-name af3_input_preparation_casp17_T
+
+dataset: casp17_T
+series: CASP17_T
+data_root: data/casp17_data
+output_dir: data/test_cases/${dataset}/af3_inputs
+
+num_seeds: 5
+ref_data_json: null     # null = let AF3 run its own protein MSA + template search
+rna_unpaired_msa: null  # protein series; ignored
+struct_only: false      # CASP17 in-progress: no GT struct yet
+
+# Target scope. null/unset = whole series (benchmark & eval mode).
+# Competition mode: restrict to specific ids so a re-run does NOT rewrite
+# inputs for targets already running or already submitted (some carry
+# hand-injected MSA paths). Override on the CLI:
+#   targets=T2413v1            or   targets=T2413v1,T2414v1
+targets: null

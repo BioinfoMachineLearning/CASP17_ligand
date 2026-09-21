@@ -1,0 +1,18 @@
+# @package _global_
+
+dataset: casp16_l1000
+output_dir: data/test_cases/${dataset}/protenix_inputs
+
+# Series name (L1000, L3000, L4000, etc.)
+series: L1000
+
+# Pre-computed MSA/Template paths (absolute recommended; relative resolved to project root)
+# Set these after running `protenix mt` once for the shared protein sequence.
+# Leave null to let Protenix search MSA/templates at inference time.
+paired_msa_path: data/test_cases/${dataset}/protenix_msa/L1001/msa/0/pairing.a3m
+unpaired_msa_path: data/test_cases/${dataset}/protenix_msa/L1001/msa/0/non_pairing.a3m
+templates_path: data/test_cases/${dataset}/protenix_msa/L1001/msa/0/hmmsearch.a3m
+
+# Protonation (Dimorphite-DL at pH 7.4)
+protonation: false
+struct_only: true  # only targets with GT in struct/L{X}000_prepared/

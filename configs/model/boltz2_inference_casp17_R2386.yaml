@@ -1,0 +1,47 @@
+# @package _global_
+# R2386 (group IIC intron solvent-model target) — Boltz-2 ion-stoichiometry sweep.
+#
+# Four stoichiometry points S1..S4 (10/20/35/55 Mg, K:Mg ~ 2:5, small Na),
+# 25 models each = 100 models total, i.e. the same budget as the usual r1+r2
+# but spent titrating ion count instead of repeating one configuration.
+# A site's rank is the lowest S point at which it appears, so the points do
+# not need to be compared or selected between afterwards.
+#
+# Run ONE point at a time (targets is a hard requirement — input_dir also
+# contains every other CASP17_R target and the sweep's other points):
+#
+#   CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n casp17_ligand python \
+#     casp17_ligand/models/boltz2_inference.py \
+#     --config-name boltz2_inference_casp17_R2386 targets=R2386_S1 seed=3861
+#
+# Seeds per point: S1=3861 S2=3862 S3=3863 S4=3864 (kept distinct so the four
+# points are independent samples, not correlated draws).
+#
+# Boltz-2 takes no RNA MSA (docs: msa is "only for protein"), so unlike AF3 and
+# Protenix there is no MSA prerequisite here.
+#
+# NOTE: the boltz that actually runs is /bmlfast/Lyuwei/0.Projects/boltz (v2.2.0,
+# editable install), NOT forks/boltz (v2.2.1). Same checkpoint either way
+# (~/.boltz -> /bmlfast/boltz_cache), only data-parsing patches differ.
+
+defaults:
+  - boltz2_inference
+
+dataset: casp17_R
+input_dir: data/test_cases/${dataset}/boltz2_inputs
+output_dir: outputs/boltz2/casp17_R2386
+
+diffusion_samples: 25    # 25 models per stoichiometry point
+step_scale: 1.5          # CASP17 RNA-tuned
+recycling_steps: 10
+sampling_steps: 200
+use_potentials: true
+
+# 417 nt + up to 83 ions = 500 tokens; well under the M2415 (1231 token) case
+# that needed max_parallel_samples lowering, so leave at the boltz default.
+max_parallel_samples: null
+
+round_tag: null          # each S point is already its own target name
+targets: null            # MUST be set on the CLI, e.g. targets=R2386_S1
+seed: null               # set per point on the CLI
+override: false

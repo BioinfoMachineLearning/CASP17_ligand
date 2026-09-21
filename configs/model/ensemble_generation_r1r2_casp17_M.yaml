@@ -1,0 +1,59 @@
+# CASP17 M-series (multi-chain RNA + protein + ligand) r1r2 ensemble.
+# 3 methods only — SeedFold is omitted (no RNA support).
+#
+# Boltz-2 note: M2415 could not run the standard 2×50 layout (the 5-wide
+# structure-module chunk OOMs on this 13-chain / 1231-token complex). It was
+# produced as diffusion_samples=4 × 25 rounds (r1..r25, 4 models each = 100),
+# which is quality-identical (see the OOM note in run_boltz2_r1r2_casp17_M.sh). Each
+# round has an umbrella symlink outputs/boltz2/casp17_M_r{N}/boltz_results_
+# {target}_input matching the standard Layout-A glob, so all 25 are listed here.
+# n_models is a PER-DIR cap; each boltz round dir holds only 4 models.
+
+dataset: casp17_M_r1r2
+input_csv: data/test_cases/casp17_M/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble_r1r2/${dataset}
+
+methods:
+  af3:
+    output_dirs:
+      - outputs/alphafold3/casp17_M_r1
+      - outputs/alphafold3/casp17_M_r2
+    n_models: 50
+  boltz2:
+    output_dirs:
+      - outputs/boltz2/casp17_M_r1
+      - outputs/boltz2/casp17_M_r2
+      - outputs/boltz2/casp17_M_r3
+      - outputs/boltz2/casp17_M_r4
+      - outputs/boltz2/casp17_M_r5
+      - outputs/boltz2/casp17_M_r6
+      - outputs/boltz2/casp17_M_r7
+      - outputs/boltz2/casp17_M_r8
+      - outputs/boltz2/casp17_M_r9
+      - outputs/boltz2/casp17_M_r10
+      - outputs/boltz2/casp17_M_r11
+      - outputs/boltz2/casp17_M_r12
+      - outputs/boltz2/casp17_M_r13
+      - outputs/boltz2/casp17_M_r14
+      - outputs/boltz2/casp17_M_r15
+      - outputs/boltz2/casp17_M_r16
+      - outputs/boltz2/casp17_M_r17
+      - outputs/boltz2/casp17_M_r18
+      - outputs/boltz2/casp17_M_r19
+      - outputs/boltz2/casp17_M_r20
+      - outputs/boltz2/casp17_M_r21
+      - outputs/boltz2/casp17_M_r22
+      - outputs/boltz2/casp17_M_r23
+      - outputs/boltz2/casp17_M_r24
+      - outputs/boltz2/casp17_M_r25
+    n_models: 50
+  protenix:
+    output_dirs:
+      - outputs/protenix/casp17_M_r1    # symlinks → applied winner
+      - outputs/protenix/casp17_M_r2
+    n_models: 50
+
+prefilter_metric: pair_iptm
+prefilter_topn: 50
+export_top_n: null
+num_workers: 4

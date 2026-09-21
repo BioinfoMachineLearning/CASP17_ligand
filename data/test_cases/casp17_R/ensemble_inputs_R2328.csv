@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2328,rna,GGUCUUACGUCGUUCGCGACUAUUGGGAGACC,ILE,CC[C@H](C)[C@@H](C(=O)O)N,,CASP17 Isoleucine binding aptamer holo + L-Isoleucine; 32nt; in vitro selected; EM; expires 2026-05-13

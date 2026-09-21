@@ -1,0 +1,4 @@
+target,entity_type,protein_sequence,classification,description,residues,source_url
+T1147,protein,GPLGSDDPEPFDPKVVTYEIFGTPGAVVDINYLDLDARTQRVNDVTLPWSITLSTTAPSALAHIVAQGNADHIGCRIIVDGELRVESVSTGVNAQTYCIEKSA,TBM-easy,"KEK_05752, MmpS5, Mycobacterium thermoresistibile",103,https://predictioncenter.org/casp15/target.cgi?id=102&view=regular
+T1104,protein,QLEDSEVEAVAKGLEEMYANGVTEDNFKNYVKNNFAQQEISSVEEELNVNISDSCVANKIKDEFFAMISISAIVKAAQKKAWKELAVTVLRFAKANGLKTNAIIVAGQLA,FM,"EntV136, Enterococcus faecalis",117,https://predictioncenter.org/casp15/target.cgi?id=28&view=regular
+T1106s1,protein,MSRIITAPHIGIEKLSAISLEELSCGLPDRYALPPDGHPVEPHLERLYPTAQSKRSLWDFASPGYTFHGLHRAQDYRRELDTLQSLLTTSQSSELQAAAALLKCQQDD,FM/TBM,"YscY-YscX, Yersinia enterocolitica, subunit 1",122,https://predictioncenter.org/casp15/target.cgi?id=33&view=regular

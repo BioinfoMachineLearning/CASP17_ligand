@@ -1,0 +1,107 @@
+[
+    {
+        "name": "M2415",
+        "sequences": [
+            {
+                "rnaSequence": {
+                    "sequence": "GGAUACUUACCUGGCAGGGGAGAUACCAUGAUCACGAAGGUGGUUUUCCCAGGGCGAGGCUUAUCCAUUGCACUCCGGAUGUGCUGACCCCUGCGAUUUCCCCAAAUGUGGGAAACUCGACUGCAUAAUUUGUGGUAGUGGGGGACUGCGUUCGCGCUUUCCCCUG",
+                    "count": 1,
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/rna_msa/0/rna_msa.a3m"
+                }
+            },
+            {
+                "rnaSequence": {
+                    "sequence": "AGAGUAAGUC",
+                    "count": 1,
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/rna_msa/1/rna_msa.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GSMTQFLPPNLLALFAPRDPIPYLPPLEKLPHEKHHNQPYCGIAPYIREFEDPRDAPPPTRAETREERMERKRREKIERRQQEVETELKMWDPHNDPNAQGDAFKTLFVARVNYDTTESKLRREFEVYGPIKRIHMVYSKRSGKPRGYAFIEYEHERDMHSAYKHADGKKIDGRRVLVDVERGRTVKGWRPRRLGGGLGGTRRGGADVNIRHSGRDDT",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/4/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/4/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GHMAVPETRPNHTIYINNLNEKIKKDELKKSLYAIFSQFGQILDILVSRSLKMRGQAFVIFKEVSSATNALRSMQGFPFYDKPMRIQYAKTDSDIIAKMKGTFVERDRKREKR",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/0/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/0/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GSMPKFYCDYCDTYLTHDSPSVRKTHCSGRKHKENVKDYYQKWMEEQAQSLIDKTTAAFQQGK",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/3/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/3/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GSMKLVRFLMKLSHETVTIELKNGTQVHGTITGVDVSMNTHLKAVKMTLKNREPVQLETLSIRGNNIRYFILPDSLPLDTLLVDV",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/2/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/2/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "MTPEELQKREEEEFNTGPLSVLTQSVKNNTQVLINCRNNKKLLGRVKAFDRHCNMVLENVKEMWTEVPKSGKGKKKSKPVNKDRYISKMFLRGDSVIVVLRNPLIAGK",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/9/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/9/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GSMTVGKSSKMLQHIDYRMRCILQDGRIFIGTFKAFDKHMNLILCDCDEFRKIKPKNSKQAEREEKRVLGLVLLRGENLVSMTVEGPPPKDTGIARV",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/5/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/5/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "MSIGVPIKVLHEAEGHIVTCETNTGEVYRGKLIEAEDNMNCQMSNITVTYRDGRVAQLEQVYIRGSKIRFLILPDMLKNAPMLKSMKNKNQGSGAGRGKAAILKAQVAARGRGRGMGRGNIFQKRR",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/6/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/6/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "GSMAYRGQGQKVQKVMVQPINLIFRYLQNRSRIQVWLYEQVNMRIEGCIIGFDEYMNLVLDDAEEIHSKTKSRKQLGRIMLKGDNITLLQSVSN",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/1/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/1/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "MSLPLNPKPFLNGLTGKPVMVKLKWGMEYKGYLVSVDGYMNMQLANTEEYIDGALSGHLGEVLIRCNNVLYIRGV",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/8/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/8/non_pairing.a3m"
+                }
+            },
+            {
+                "proteinChain": {
+                    "sequence": "MSKAHPPELKKFMDKKLSLKLNGGRHVQGILRGFDPFMNLVIDECVEMATSGQQNNIGMVVIRGNSIIMLEALERV",
+                    "count": 1,
+                    "pairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/7/pairing.a3m",
+                    "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/msa/7/non_pairing.a3m"
+                }
+            },
+            {
+                "ligand": {
+                    "ligand": "CN(C1CC(C)(C)NC(C)(C)C1)c1ncc(nn1)-c1ccc(cc1O)-n1nccn1",
+                    "count": 1
+                }
+            }
+        ]
+    }
+]

@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2327,rna,GGCAUCGGAAAGUGGGUUGAUGUAAGUAACAGGCGAUGCC,HIS,c1c([nH+]c[nH]1)C[C@@H](C(=O)O)N,,CASP17 Histidine binding aptamer holo + L-Histidine; 40nt; in vitro selected; EM; expires 2026-05-13

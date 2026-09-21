@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2387,rna,GGUGCGUUGCUUCCGAUGACGGCACCUUAAAAACAAUAGGAGA,NAD,NC(=O)c1ccc[n+](c1)[C@@H]2O[C@H](CO[P]([O-])(=O)O[P@](O)(=O)OC[C@H]3O[C@H]([C@H](O)[C@@H]3O)n4cnc5c(N)ncnc45)[C@@H](O)[C@H]2O,,CASP17 RNA-NAD+ complex; 43nt; X-RAY; server expires 2026-06-17

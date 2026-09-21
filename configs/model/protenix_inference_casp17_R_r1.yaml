@@ -1,0 +1,40 @@
+# @package _global_
+# CASP17 R-series round 1 — RNA-ligand inference on GPU 1
+#
+# Run:
+#   PROTENIX_ROOT_DIR=$(pwd)/weights/protenix \
+#     conda run -n casp17_ligand python casp17_ligand/models/protenix_inference.py \
+#     --config-name protenix_inference_casp17_R_r1
+#
+# Input JSONs are read from data/test_cases/casp17_R/protenix_inputs/ (shared
+# across r1/r2). Output lands in outputs/protenix/casp17_R_r1/{target}/seed_*/.
+# RNA targets: protein MSA / template are NO-OPs (no proteinChain), but the
+# rnaSequence must carry an `unpairedMsaPath` written by run_rna_msa_only.py.
+
+dataset: casp17_R
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/${dataset}_r1
+
+env_name: protenix
+gpu_device: 1
+
+protenix_root_dir: weights/protenix
+# Not needed for RNA-only targets
+seqres_database_path: null
+msa_dir: null
+
+model_name: protenix_base_20250630_v1.0.0
+seeds: "101,102,103,104,105,106,107,108,109,110"   # 10 seeds
+dtype: bf16   # V100 silently runs FP32 (higher precision than BF16; no quality loss)
+
+use_msa: true            # RNA targets: no proteinChain → effectively no-op
+use_template: false      # RNA-only: no template search needed
+use_rna_msa: true        # consumes unpairedMsaPath injected into JSON
+enable_cache: true
+
+cycle: 10
+step: 200
+n_sample: 5              # 10 seeds × 5 samples = 50 models / target
+
+targets: []
+override: false

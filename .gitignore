@@ -1,0 +1,110 @@
+# =============================================================================
+# 大体量运行产物 / 输入数据（本地约 670G，永不入库）
+# =============================================================================
+# outputs 495G（四方法推理产物）/ weights 97G / logs 2.7G
+/outputs/
+/weights/
+/logs/
+/top5_export/
+
+# tests/ 是一次性实验草稿场（15G / 8.1 万文件），整个不入库。
+# 会反复跑的真单元测试在 scripts/tests/。
+/tests/
+
+# data/ 55G，只放行各 test case 根目录的 manifest（ensemble_inputs*.csv 等，
+# 约 38 个文件 / 900KB —— 复现流程的输入入口）。
+# 深层的 msa/*.csv、boltz2_outputs/ 等一律排除。
+/data/**
+/data/test_cases/casp15_homework/
+!/data/test_cases/
+!/data/test_cases/*/
+!/data/test_cases/*/*.csv
+!/data/test_cases/*/*.txt
+!/data/test_cases/*/*.tsv
+# M 系列是 13 链复合物，单序列 schema 表达不了，输入只能手写。
+# 带上 M2415 的两份作为模板（各 4-8KB，不含内嵌 MSA）。
+!/data/test_cases/casp17_M/boltz2_inputs/
+!/data/test_cases/casp17_M/boltz2_inputs/*.yaml
+!/data/test_cases/casp17_M/protenix_inputs/
+!/data/test_cases/casp17_M/protenix_inputs/*.json
+# scripts/tests/test_pocket_metrics.py 的 fixture（L1001 两个 model 的 PDB+SDF，317KB）
+!/data/test_cases/casp16_l1000/ensemble_outputs/
+!/data/test_cases/casp16_l1000/ensemble_outputs/**/
+!/data/test_cases/casp16_l1000/ensemble_outputs/L1001/cif_converted/L1001_model_[01]_*.pdb
+!/data/test_cases/casp16_l1000/ensemble_outputs/L1001/cif_converted/L1001_model_[01]_*.sdf
+
+# =============================================================================
+# 第三方代码副本
+# =============================================================================
+# AF3 / Boltz / Protenix / PoseBench / RTMScore 上游 fork（1.7G）。
+# 各自有独立仓库与 license；且实跑用的也不是这份副本。
+/forks/
+
+# =============================================================================
+# 临时 / 草稿工作区
+# =============================================================================
+# .audit_tmp 329M（一次性审计脚本与中间产物）/ scratch 86M（分批推理输入草稿）
+/.audit_tmp/
+/scratch/
+# archive 是本地归档：打完的靶点和跑过的基准，留着自己复盘，不进开源包
+/archive/
+/casp15_assignment/
+# boltz 冒烟测试产物
+/test_dot_out/
+
+# 从 AF3 docker 镜像里掏出来的 folding_input.py（1500 行 DeepMind 源码，
+# 且只对应一个镜像 tag）。用 casp17/scripts/make_af3_patch.sh 现生成。
+casp17/patches/
+
+# Hellbender 集群 SLURM 脚本：站点特定（含登录主机名/用户名），暂不开源
+/hellbender/
+
+# casp17/audit 保留 .py，排除数据产物
+casp17/audit/**/*.npz
+casp17/audit/**/*.csv
+casp17/audit/**/*.bak
+
+# =============================================================================
+# 提交产物 / 账号态（含 email、session cookie，绝不入库）
+# =============================================================================
+casp17/submissions/
+casp17/seedfold/
+
+# =============================================================================
+# 文档：只发 README，方法记录与工作日志不入库
+# =============================================================================
+*.md
+!README.md
+*.docx
+
+# =============================================================================
+# 构建 / 工具链噪声
+# =============================================================================
+*.pyc
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.claude/
+.agents/
+/node_modules/
+/package.json
+/package-lock.json
+casp17/tools/nci_toolkit.tgz
+
+# =============================================================================
+# 散落的临时输出
+# =============================================================================
+*.log
+nohup.out
+/mol1_test.sdf
+/mol2_test.sdf
+/af3_l1000_top1_pocket_plddt_4.5.csv
+
+# 本机环境变量（从 env.example 拷贝而来）
+/.env
+
+# 编辑器/脚本留下的备份文件
+*.bak
+
+# nci_toolkit：常备本地工具，不入库
+/tools/

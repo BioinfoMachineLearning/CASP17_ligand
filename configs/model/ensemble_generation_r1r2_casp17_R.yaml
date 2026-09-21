@@ -1,0 +1,27 @@
+dataset: casp17_R_r1r2
+input_csv: data/test_cases/casp17_R/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble_r1r2/${dataset}
+
+methods:
+  af3:
+    output_dirs:
+      - outputs/alphafold3/casp17_R_r1
+      - outputs/alphafold3/casp17_R_r2
+    n_models: 50
+  boltz2:
+    output_dirs:
+      - outputs/boltz2/casp17_R_r1
+      - outputs/boltz2/casp17_R_r2
+    n_models: 50
+  protenix:
+    output_dirs:
+      - outputs/protenix/casp17_R_r1
+      - outputs/protenix/casp17_R_r2
+    n_models: 50
+
+prefilter_metric: pair_iptm
+prefilter_topn: 50
+
+export_top_n: null
+
+num_workers: 4

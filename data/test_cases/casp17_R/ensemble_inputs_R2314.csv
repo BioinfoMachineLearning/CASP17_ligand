@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2314,rna,CGAGGACCGGUACGGCCGCCACUCG,TRP,c1ccc2c(c1)c(c[nH]2)C[C@@H](C(=O)O)N,,CASP17 RNA aptamer (holo) + L-Tryptophan; 25nt from official target.cgi (canonical user-confirmed); expires 2026-05-06

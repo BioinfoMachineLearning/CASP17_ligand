@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2318,rna,CACUGGAUGAGGUUUUCAGGAGAACAGGGUAAGCUAACCAUGAUGAACUGAAAACGGACAGAACUCUGGAGAGUUCCGCAAGGACGCCGAAGGGGCAAGACAGCAAAGCUGUUCAAUCUCUCAGGCAAAAGGACAGAGCG,GLY,C(C(=O)O)N,,CASP17 Dha Glycine riboswitch holo + Gly; 140nt; organism Desulfitobacterium hafniense; expires 2026-05-07

@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2326,rna,GCAGCCGCGCGUGGCCUUGAUGUUGUGCCCGGGCUGC,ARG,C(C[C@@H](C(=O)O)N)CNC(=[NH2+])N,,CASP17 Arginine binding aptamer holo + L-Arginine; 37nt; in vitro selected; EM; expires 2026-05-13

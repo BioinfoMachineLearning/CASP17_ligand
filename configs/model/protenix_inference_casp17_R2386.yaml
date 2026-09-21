@@ -1,0 +1,56 @@
+# @package _global_
+# R2386 (group IIC intron solvent-model target) — Protenix ion-stoichiometry sweep.
+#
+# Four stoichiometry points S1..S4 (10/20/35/55 Mg, K:Mg ~ 2:5, small Na),
+# 5 seeds x 5 samples = 25 models each = 100 total.
+#
+# PREREQUISITE — RNA MSA (run once, shared by all four points):
+#   PROTENIX_ROOT_DIR=$(pwd)/weights/protenix \
+#     conda run --no-capture-output -n protenix python casp17/scripts/run_rna_msa_only.py \
+#     --input data/test_cases/casp17_R/protenix_inputs/R2386_msa.json \
+#     --out_dir data/test_cases/casp17_R/protenix_msa
+#   then patch the resulting absolute a3m path into each R2386_S*.json as
+#   sequences[0].rnaSequence.unpairedMsaPath (see casp17/scripts/inject_protenix_msa.py).
+#   Without it, use_rna_msa below is a no-op and the RNA runs single-sequence.
+#
+# Run ONE point at a time with its own seed block (targets is a hard requirement —
+# input_dir also holds every other CASP17_R target and the sweep's other points):
+#
+#   PROTENIX_ROOT_DIR=$(pwd)/weights/protenix \
+#     conda run --no-capture-output -n casp17_ligand python \
+#     casp17_ligand/models/protenix_inference.py \
+#     --config-name protenix_inference_casp17_R2386 \
+#     'targets=[R2386_S1]' seeds="101,102,103,104,105" gpu_device=0
+#
+# Seed blocks: S1=101-105  S2=106-110  S3=111-115  S4=116-120
+#
+# Checkpoint choice, worth knowing for this target: protenix_base_20250630_v1.0.0
+# has a 2025-06-30 data cutoff, so PDB 9C6I (the 2.56 A cryo-EM structure of this
+# exact 417 nt construct, deposited 2024-06-07) is inside its training window.
+# That makes it unusable as a blind test of ion placement, but legitimate and
+# probably advantageous to run — the organizers explicitly offer 9C6I as a
+# reference. Use protenix_base_default_v1.0.0 (2021 cutoff) if a blind
+# comparison against 9C6I's 21 experimental Mg sites is wanted.
+
+defaults:
+  - protenix_inference_casp17_R_r1
+
+dataset: casp17_R
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/casp17_R2386
+
+model_name: protenix_base_20250630_v1.0.0
+seeds: "101,102,103,104,105"   # override per point on the CLI
+n_sample: 5                    # 5 seeds x 5 samples = 25 models / point
+
+use_msa: true          # no proteinChain -> no-op
+use_template: false    # RNA templates are not supported by Protenix at all
+use_rna_msa: true      # consumes unpairedMsaPath injected into the JSON
+enable_cache: true
+
+cycle: 10
+step: 200
+
+gpu_device: 0
+targets: []            # MUST be set on the CLI, e.g. 'targets=[R2386_S1]'
+override: false

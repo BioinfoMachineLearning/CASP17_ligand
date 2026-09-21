@@ -1,0 +1,18 @@
+Subject: CASP17 L01/L02 pose submission - LIGAND record for the fragment series
+
+Dear CASP team,
+
+Two short questions before we submit L-series poses.
+
+1. LIGAND record. The format page defines it as "LIGAND n XXX", with n and XXX
+   taken from the released SMILES file. For the regular ligand targets that file
+   has ID and Name columns (T2412: "0  DEL"), but L01.smiles.txt and
+   L02.smiles.txt have only CASP_ID and Canonical_smiles. What should the record
+   look like for these targets - "LIGAND 0 LIG", "LIGAND 1 L010016", or something
+   else?
+
+2. Binder count. Your announcement mentioned 80 binders for L01, but the target
+   page now lists 79. (It previously listed 1210 fragments, with L010356 and
+   L010357 being the same compound.) Is 79 the final number?
+
+Thanks very much,

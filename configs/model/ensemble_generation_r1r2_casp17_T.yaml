@@ -1,0 +1,46 @@
+dataset: casp17_T_r1r2
+input_csv: data/test_cases/casp17_T/ensemble_inputs.csv
+ensemble_output_dir: outputs/ensemble_r1r2/${dataset}
+
+methods:
+  af3:
+    output_dirs:
+      - outputs/alphafold3/casp17_T_r1
+      - outputs/alphafold3/casp17_T_r2
+    n_models: 50
+  boltz2:
+    # n_models is a per-output_dir CAP, not a quota, so 50 is correct for both
+    # historical layouts:
+    #   T2383 (V100): OOM batch-skip left only 25/round, so it was split into
+    #                 4 sub-rounds -> min(50,25) x 4 = 100. Unchanged by the cap.
+    #   A100 hosts:   50/round x r1,r2 = 100 (r3/r4 empty for these targets).
+    # It used to be 25, which silently truncated any 50/round target to 50
+    # models taken in glob order -- i.e. NOT the pair_iptm top-50 the other
+    # three methods get. Raised to 50 on 2026-07-29 (first applied to T2455).
+    # NOTE: T2409-T2414 were submitted under the old cap and thus used only
+    # 50 of their 100 Boltz-2 models, unfiltered.
+    output_dirs:
+      - outputs/boltz2/casp17_T_r1
+      - outputs/boltz2/casp17_T_r2
+      - outputs/boltz2/casp17_T_r3
+      - outputs/boltz2/casp17_T_r4
+    n_models: 50
+  protenix:
+    # Protenix dual-ckpt: canonical r1/r2 are symlinks → applied winner.
+    output_dirs:
+      - outputs/protenix/casp17_T_r1
+      - outputs/protenix/casp17_T_r2
+    n_models: 50
+  seedfold:
+    # SeedFold web-API run, 10 jobs × 5 models per round = 50/round.
+    output_dirs:
+      - outputs/seedfold/casp17_T
+      - outputs/seedfold/casp17_T_r2
+    n_models: 50
+
+prefilter_metric: pair_iptm    # protein-ligand cross-chain iptm (canonical extractor)
+prefilter_topn: 50
+
+export_top_n: null
+
+num_workers: 4

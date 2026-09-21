@@ -1,0 +1,87 @@
+[
+  {
+    "name": "M2415",
+    "sequences": [
+      {
+        "rnaSequence": {
+          "sequence": "GGAUACUUACCUGGCAGGGGAGAUACCAUGAUCACGAAGGUGGUUUUCCCAGGGCGAGGCUUAUCCAUUGCACUCCGGAUGUGCUGACCCCUGCGAUUUCCCCAAAUGUGGGAAACUCGACUGCAUAAUUUGUGGUAGUGGGGGACUGCGUUCGCGCUUUCCCCUG",
+          "count": 1,
+          "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/rna_msa/0/rna_msa.a3m"
+        }
+      },
+      {
+        "rnaSequence": {
+          "sequence": "AGAGUAAGUC",
+          "count": 1,
+          "unpairedMsaPath": "/bmlfast/Lyuwei/0.Projects/CASP17_ligand/data/test_cases/casp17_M/protenix_msa/M2415/rna_msa/1/rna_msa.a3m"
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GSMTQFLPPNLLALFAPRDPIPYLPPLEKLPHEKHHNQPYCGIAPYIREFEDPRDAPPPTRAETREERMERKRREKIERRQQEVETELKMWDPHNDPNAQGDAFKTLFVARVNYDTTESKLRREFEVYGPIKRIHMVYSKRSGKPRGYAFIEYEHERDMHSAYKHADGKKIDGRRVLVDVERGRTVKGWRPRRLGGGLGGTRRGGADVNIRHSGRDDT",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GHMAVPETRPNHTIYINNLNEKIKKDELKKSLYAIFSQFGQILDILVSRSLKMRGQAFVIFKEVSSATNALRSMQGFPFYDKPMRIQYAKTDSDIIAKMKGTFVERDRKREKR",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GSMPKFYCDYCDTYLTHDSPSVRKTHCSGRKHKENVKDYYQKWMEEQAQSLIDKTTAAFQQGK",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GSMKLVRFLMKLSHETVTIELKNGTQVHGTITGVDVSMNTHLKAVKMTLKNREPVQLETLSIRGNNIRYFILPDSLPLDTLLVDV",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "MTPEELQKREEEEFNTGPLSVLTQSVKNNTQVLINCRNNKKLLGRVKAFDRHCNMVLENVKEMWTEVPKSGKGKKKSKPVNKDRYISKMFLRGDSVIVVLRNPLIAGK",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GSMTVGKSSKMLQHIDYRMRCILQDGRIFIGTFKAFDKHMNLILCDCDEFRKIKPKNSKQAEREEKRVLGLVLLRGENLVSMTVEGPPPKDTGIARV",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "MSIGVPIKVLHEAEGHIVTCETNTGEVYRGKLIEAEDNMNCQMSNITVTYRDGRVAQLEQVYIRGSKIRFLILPDMLKNAPMLKSMKNKNQGSGAGRGKAAILKAQVAARGRGRGMGRGNIFQKRR",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "GSMAYRGQGQKVQKVMVQPINLIFRYLQNRSRIQVWLYEQVNMRIEGCIIGFDEYMNLVLDDAEEIHSKTKSRKQLGRIMLKGDNITLLQSVSN",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "MSLPLNPKPFLNGLTGKPVMVKLKWGMEYKGYLVSVDGYMNMQLANTEEYIDGALSGHLGEVLIRCNNVLYIRGV",
+          "count": 1
+        }
+      },
+      {
+        "proteinChain": {
+          "sequence": "MSKAHPPELKKFMDKKLSLKLNGGRHVQGILRGFDPFMNLVIDECVEMATSGQQNNIGMVVIRGNSIIMLEALERV",
+          "count": 1
+        }
+      },
+      {
+        "ligand": {
+          "ligand": "CN(C1CC(C)(C)NC(C)(C)C1)c1ncc(nn1)-c1ccc(cc1O)-n1nccn1",
+          "count": 1
+        }
+      }
+    ]
+  }
+]

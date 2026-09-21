@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2317,rna,GCGGGUGAAUGUAAGCAGAGAGACUGCGAAAAGCGGCGCCGACGGGGAAAGCAUGUAUUAUGUGAAACUCUCAGGCAAAAGGAUGUUUACGGGACGCAACUCUGGAGUCAUUUUUGUGUUACGACAGGG,GLY,C(C(=O)O)N,,CASP17 Lmo Glycine riboswitch holo + Gly; 129nt; organism Listeria monocytogenes; expires 2026-05-07

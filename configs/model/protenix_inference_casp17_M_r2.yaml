@@ -1,0 +1,47 @@
+# @package _global_
+# CASP17 M-series round 2 — multi-chain RNA + protein + ligand inference.
+#
+# M2415 is a 13-chain complex (2 rnaSequence + 10 proteinChain + 1 ligand),
+# so ALL THREE search flags are on simultaneously — unlike T (rna_msa=false)
+# or R (template=false):
+#   use_msa=true       protein paired/unpaired MSA (Protenix internal hmmer)
+#   use_template=true  protein template search (needs seqres_database_path)
+#   use_rna_msa=true   consumes unpairedMsaPath injected into the rnaSequences
+#                      by casp17/scripts/run_rna_msa_only.py (run BEFORE this)
+#
+# Run:
+#   PROTENIX_ROOT_DIR=$(pwd)/weights/protenix \
+#     conda run -n casp17_ligand python casp17_ligand/models/protenix_inference.py \
+#     --config-name protenix_inference_casp17_M_r2
+#
+# Input JSONs are read from data/test_cases/casp17_M/protenix_inputs/ (shared
+# across r1/r2). Output lands in outputs/protenix/casp17_M_r1/{target}/seed_*/.
+
+dataset: casp17_M
+input_dir: data/test_cases/${dataset}/protenix_inputs
+output_dir: outputs/protenix/${dataset}_r2
+
+env_name: protenix
+gpu_device: 1
+
+protenix_root_dir: weights/protenix
+# Template search database (used by Protenix internal hmmsearch for proteins)
+seqres_database_path: ${oc.env:AF3_DB_DIR,/bmlfast/databases}/pdb_seqres_2022_09_28.fasta
+# Pre-computed MSA dir (null = let Protenix run its own protein search)
+msa_dir: null
+
+model_name: protenix_base_default_v1.0.0
+seeds: "201,202,203,204,205,206,207,208,209,210"   # 10 seeds → 50 models
+dtype: bf16
+
+use_msa: true            # protein chains present
+use_template: true       # protein chains present → template search on
+use_rna_msa: true        # RNA chains present → consumes injected unpairedMsaPath
+enable_cache: true       # share MSA cache across r1/r2/dual-ckpt invocations
+
+cycle: 10
+step: 200
+n_sample: 5              # 10 seeds × 5 samples = 50 models / target
+
+targets: []
+override: false

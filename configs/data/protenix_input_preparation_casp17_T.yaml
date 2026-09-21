@@ -1,0 +1,35 @@
+# @package _global_
+# CASP17 protein-with-ligand series (T2383 etc.)
+#
+# Run:
+#   conda run -n casp17_ligand python casp17_ligand/data/protenix_input_preparation.py \
+#       --config-name protenix_input_preparation_casp17_T
+
+dataset: casp17_T
+series: CASP17_T
+data_root: data/casp17_data
+output_dir: data/test_cases/${dataset}/protenix_inputs
+
+# Pre-computed protein MSA/templates (from `protenix mt`). Leave null on first
+# pass — Protenix will run its internal MSA pipeline at inference time. For
+# large targets you may want to pre-compute once via `protenix mt --input
+# protenix_inputs/<TGT>.json --out_dir protenix_msa/<TGT>` and inject the
+# paths here to share across r1/r2/dual-ckpt invocations.
+paired_msa_path: null
+unpaired_msa_path: null
+templates_path: null
+
+# RNA MSA path (ignored for protein series; kept for schema parity).
+rna_unpaired_msa_path: null
+
+protonation: false
+add_zn: false        # L3000 autotaxin specific
+add_glycan: false    # L3000 autotaxin specific
+struct_only: false   # CASP17 in-progress: no GT struct yet
+
+# Target scope. null/unset = whole series (benchmark & eval mode).
+# Competition mode: restrict to specific ids so a re-run does NOT rewrite
+# inputs for targets already running or already submitted (some carry
+# hand-injected MSA paths). Override on the CLI:
+#   targets=T2413v1            or   targets=T2413v1,T2414v1
+targets: null

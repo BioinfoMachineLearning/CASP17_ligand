@@ -1,0 +1,8 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_csv_filepath: data/test_cases/${dataset}/ensemble_inputs.csv
+output_dir: data/test_cases/${dataset}/boltz2_inputs
+predict_affinity: false
+msa_path: null  # path to pre-computed MSA (relative to project root); null = use MSA server
+struct_only: true  # only targets with GT in struct/L{X}000_prepared/

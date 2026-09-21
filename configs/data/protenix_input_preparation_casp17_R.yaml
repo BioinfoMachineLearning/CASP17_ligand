@@ -1,0 +1,26 @@
+# @package _global_
+# CASP17 RNA-with-ligand series (R2314 etc.)
+#
+# Run:
+#   conda run -n casp17_ligand python casp17_ligand/data/protenix_input_preparation.py \
+#       --config-name protenix_input_preparation_casp17_R
+
+dataset: casp17_R
+series: CASP17_R
+data_root: data/casp17_data
+output_dir: data/test_cases/${dataset}/protenix_inputs
+
+# Protein MSA/templates are ignored for RNA targets; left here for schema parity.
+paired_msa_path: null
+unpaired_msa_path: null
+templates_path: null
+
+# Optional RNA MSA path (Protenix supports rna_msa_search via `protenix mt`).
+# Leave null to omit `unpairedMsaPath` from the JSON; if your Protenix run
+# requires it, set this to a concrete a3m path or a self-only dummy.
+rna_unpaired_msa_path: null
+
+protonation: false
+add_zn: false        # L3000 autotaxin specific
+add_glycan: false    # L3000 autotaxin specific
+struct_only: false   # CASP17 in-progress: no GT struct yet

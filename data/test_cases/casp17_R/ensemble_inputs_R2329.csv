@@ -1,0 +1,2 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2329,rna,CGGAGUCAUGGCUCAGGGCUGUUCGCAGCCGCUGCAGUCAGUCGAAAGACUGAGACUCCG,SAM,C[S@@+](CC[C@@H](C(=O)[O-])N)C[C@@H]1[C@H]([C@H]([C@@H](O1)n2cnc3c2ncnc3N)O)O,,CASP17 SAMURI ribozyme holo + S-Adenosylmethionine; 60nt; in vitro selected; EM; expires 2026-05-14

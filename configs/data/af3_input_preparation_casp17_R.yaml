@@ -1,0 +1,20 @@
+# @package _global_
+# CASP17 RNA-with-ligand series (R2314 etc.)
+#
+# Run:
+#   conda run -n casp17_ligand python casp17_ligand/data/af3_input_preparation.py \
+#       --config-name af3_input_preparation_casp17_R
+
+dataset: casp17_R
+series: CASP17_R
+data_root: data/casp17_data
+output_dir: data/test_cases/${dataset}/af3_inputs
+
+# AF3 RNA chain: we leave `unpairedMsa` UNSET so AF3's data pipeline runs a real
+# Rfam/RNAcentral search at inference time. Setting `rna_unpaired_msa` here would
+# inject that string verbatim and disable AF3's RNA MSA search — only do that if
+# you've already run `--norun_inference` once and want to reuse the searched MSA.
+num_seeds: 5
+ref_data_json: null         # protein-MSA injection; ignored for RNA
+rna_unpaired_msa: null      # null = let AF3 search RNA MSAs (recommended)
+struct_only: false          # CASP17 in-progress: no GT struct yet

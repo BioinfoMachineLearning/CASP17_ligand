@@ -1,0 +1,16 @@
+# @package _global_
+# CASP17 RNA-with-ligand series (R2314 etc.)
+#
+# Run:
+#   conda run -n casp17_ligand python casp17_ligand/data/boltz2_input_preparation.py \
+#       --config-name boltz2_input_preparation_casp17_R
+
+dataset: casp17_R
+series: CASP17_R
+data_root: data/casp17_data
+input_csv_filepath: data/test_cases/${dataset}/ensemble_inputs.csv
+output_dir: data/test_cases/${dataset}/boltz2_inputs
+
+predict_affinity: false   # Boltz-2 affinity is protein-ligand only; RNA out of scope
+msa_path: null            # Boltz-2 docs: msa is "only for protein"; ignored for RNA
+struct_only: false        # CASP17 in-progress: no GT struct yet

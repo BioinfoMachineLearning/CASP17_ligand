@@ -1,0 +1,2 @@
+target,entity_type,ligand_name,ligand_smiles,experimental_affinity,notes
+M2415,complex,LIG,CN(C1CC(C)(C)NC(C)(C)C1)c1ncc(nn1)-c1ccc(cc1O)-n1nccn1,,CASP17 M-series 13-chain RNA+protein+ligand complex; Boltz-2 via 4x25 OOM-safe route

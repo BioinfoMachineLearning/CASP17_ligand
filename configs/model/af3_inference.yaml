@@ -1,0 +1,34 @@
+# @package _global_
+
+dataset: casp16_l1000
+input_dir: data/test_cases/${dataset}/af3_inputs
+output_dir: outputs/alphafold3/${dataset}
+
+# Model weights and databases (absolute paths, read-only)
+model_dir: ${oc.env:AF3_WEIGHTS_DIR,/bml/Lyuwei/Alphafold3_weights}
+db_dir: ${oc.env:AF3_DB_DIR,/bmlfast/databases}
+# Docker settings
+docker_image: ${oc.env:AF3_IMAGE,alphafold3-3.0.3_casp17}   # override with AF3_IMAGE
+gpu_device: 0
+
+# Resource limits (cgroups isolation) -- leave half the box for other users
+memory_limit: 100g
+memory_swap: 100g
+cpus: 96.0
+shm_size: 8g
+
+# XLA memory settings (image defaults: preallocate=true, mem_fraction=0.95)
+xla_preallocate: true
+tf_force_unified_memory: false
+xla_client_mem_fraction: 0.95
+
+# AF3 pipeline flags
+num_seeds: 10               # passed as --num_seeds; no modelSeeds needed in the JSON
+run_data_pipeline: true
+run_inference: true
+
+# JAX compilation cache (persist across runs)
+jax_compilation_cache_dir: /tmp/af_output/.jax_cache
+
+# Override existing results
+override: false

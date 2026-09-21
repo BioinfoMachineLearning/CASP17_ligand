@@ -1,0 +1,12 @@
+target,entity_type,rna_sequence,ligand_name,ligand_smiles,experimental_affinity,notes
+R2314,rna,CGAGGACCGGUACGGCCGCCACUCG,TRP,c1ccc2c(c1)c(c[nH]2)C[C@@H](C(=O)O)N,,CASP17 RNA aptamer (holo) + L-Tryptophan; 25nt from official target.cgi (canonical user-confirmed); expires 2026-05-06
+R2317,rna,GCGGGUGAAUGUAAGCAGAGAGACUGCGAAAAGCGGCGCCGACGGGGAAAGCAUGUAUUAUGUGAAACUCUCAGGCAAAAGGAUGUUUACGGGACGCAACUCUGGAGUCAUUUUUGUGUUACGACAGGG,GLY,C(C(=O)O)N,,CASP17 Lmo Glycine riboswitch holo + Gly; 129nt; organism Listeria monocytogenes; expires 2026-05-07
+R2318,rna,CACUGGAUGAGGUUUUCAGGAGAACAGGGUAAGCUAACCAUGAUGAACUGAAAACGGACAGAACUCUGGAGAGUUCCGCAAGGACGCCGAAGGGGCAAGACAGCAAAGCUGUUCAAUCUCUCAGGCAAAAGGACAGAGCG,GLY,C(C(=O)O)N,,CASP17 Dha Glycine riboswitch holo + Gly; 140nt; organism Desulfitobacterium hafniense; expires 2026-05-07
+R2326,rna,GCAGCCGCGCGUGGCCUUGAUGUUGUGCCCGGGCUGC,ARG,C(C[C@@H](C(=O)O)N)CNC(=[NH2+])N,,CASP17 Arginine binding aptamer holo + L-Arginine; 37nt; in vitro selected; EM; expires 2026-05-13
+R2327,rna,GGCAUCGGAAAGUGGGUUGAUGUAAGUAACAGGCGAUGCC,HIS,c1c([nH+]c[nH]1)C[C@@H](C(=O)O)N,,CASP17 Histidine binding aptamer holo + L-Histidine; 40nt; in vitro selected; EM; expires 2026-05-13
+R2328,rna,GGUCUUACGUCGUUCGCGACUAUUGGGAGACC,ILE,CC[C@H](C)[C@@H](C(=O)O)N,,CASP17 Isoleucine binding aptamer holo + L-Isoleucine; 32nt; in vitro selected; EM; expires 2026-05-13
+R2329,rna,CGGAGUCAUGGCUCAGGGCUGUUCGCAGCCGCUGCAGUCAGUCGAAAGACUGAGACUCCG,SAM,C[S@@+](CC[C@@H](C(=O)[O-])N)C[C@@H]1[C@H]([C@H]([C@@H](O1)n2cnc3c2ncnc3N)O)O,,CASP17 SAMURI ribozyme holo + S-Adenosylmethionine; 60nt; in vitro selected; EM; expires 2026-05-14
+R2330,rna,ACUCGGGGUGCCCUUCAAAAGAAGGCUGAGAAAUACCCGUAUCACCUGAUCUGGAUAAUGCCAGCGUAGGGAAGU,LIG,N1=CC(=C(C=C1)NC2CNC2)NCC3=CC4=NC=CN=C4C=C3,,CASP17 TPP riboswitch holo + LIG; 75nt; organism Escherichia coli; EM; expires 2026-05-14
+R2365,rna,GGGCGGCAGUAGCCAACACGAGUACUGCUUCGGCAGUGGAACCAACGUAGUAUGCCGCCC,GTP,c1nc2c(n1[C@H]3[C@@H]([C@@H]([C@H](O3)CO[P@](=O)(O)O[P@](=O)(O)OP(=O)(O)O)O)O)N=C(NC2=O)N,,CASP17 RNA-GTP complex; 60nt; X-RAY; server expires 2026-06-04 (extended); SMILES from view=all page (extra_experiments TSV was malformed)
+R2387,rna,GGUGCGUUGCUUCCGAUGACGGCACCUUAAAAACAAUAGGAGA,NAD,NC(=O)c1ccc[n+](c1)[C@@H]2O[C@H](CO[P]([O-])(=O)O[P@](O)(=O)OC[C@H]3O[C@H]([C@H](O)[C@@H]3O)n4cnc5c(N)ncnc45)[C@@H](O)[C@H]2O,,CASP17 RNA-NAD+ complex; 43nt; X-RAY; server expires 2026-06-17
+R2390,rna,GGUGGGUUCUUCCUCGCCACGGUAAAAACAAGGA,NMN,NC(=O)c1ccc[n+](c1)[C@@H]2O[C@H](CO[P](O)(O)=O)[C@@H](O)[C@H]2O,,CASP17 R2390; 34nt RNA-NMN complex; expires 2026-06-19
